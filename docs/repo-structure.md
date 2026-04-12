@@ -33,6 +33,8 @@ knowledge-forge/
 │       └── publish/
 ├── tests/
 │   ├── conftest.py
+│   ├── fixtures/
+│   ├── golden/
 │   └── test_package.py
 ├── data/
 │   ├── .gitkeep
@@ -40,6 +42,8 @@ knowledge-forge/
 └── docs/
     ├── agent-workflow.md
     ├── architecture.md
+    ├── codex-issue-runbook.md
+    ├── evals.md
     ├── inference-layer.md
     ├── publish-contract.md
     ├── repo-structure.md
@@ -68,6 +72,8 @@ knowledge-forge/
 ├── docs/
 │   ├── agent-workflow.md
 │   ├── architecture.md
+│   ├── codex-issue-runbook.md
+│   ├── evals.md
 │   ├── roadmap.md
 │   ├── publish-contract.md
 │   ├── inference-layer.md
@@ -143,7 +149,8 @@ knowledge-forge/
 │   ├── test_extract/
 │   ├── test_compile/
 │   ├── test_publish/
-│   └── fixtures/
+│   ├── fixtures/
+│   └── golden/
 ├── scripts/
 │   └── README.md
 └── data/                            # gitignored except conventions
@@ -196,6 +203,21 @@ for:
 
 Agents should stage FlowCommander-facing output here first rather than writing
 directly into the downstream repository during normal work.
+
+## Evaluation skeleton
+
+The repository now includes a lightweight place for future fixture-driven
+quality checks without pretending a full benchmark harness already exists.
+
+- `docs/evals.md` explains how fixture and golden-file checks should be added
+  over time
+- `tests/fixtures/` is for committed source inputs and normalized intermediate
+  samples used by parser or extraction tests
+- `tests/golden/` is for expected structured outputs or Markdown snapshots that
+  future tests can compare against
+
+This skeleton is intentionally minimal. Add concrete fixtures only when an issue
+needs them and the expected output shape is stable enough to review.
 
 ### Naming conventions
 

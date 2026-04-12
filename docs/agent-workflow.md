@@ -30,6 +30,60 @@ If FlowCommander is not present locally, agents can still prepare Knowledge
 Forge artifacts, but they should call out that downstream structure was not
 verified against the local target clone.
 
+## Repo phase boundaries
+
+Knowledge Forge should be worked in the phase it is actually in, not the phase
+contributors wish already existed.
+
+### Bootstrap
+
+In scope:
+- repo docs and operating guidance
+- package scaffolding and local developer workflow
+- minimal CLI and test harness setup
+- fixture and golden-file skeletons for later ratcheting
+
+Out of scope:
+- speculative end-to-end pipeline code
+- finished publish automation
+- pretending unimplemented roadmap phases already exist
+
+### Pipeline and parsing
+
+In scope:
+- intake manifests and bucket assignment
+- OCR and normalization workflow
+- parse artifact shape, parser selection, and parse quality checks
+- parser-oriented fixtures and regression tests
+
+Out of scope:
+- wiki compilation features unrelated to parser inputs
+- FlowCommander product changes
+- publish automation beyond the documented contract
+
+### Inference and extraction
+
+In scope:
+- OpenAI request handling, batching, retry, logging, and cost accounting
+- extraction schemas, provenance, repair loops, and extraction validation
+- fixture-driven evals for parsed sections and extraction outputs
+
+Out of scope:
+- direct downstream repo mutation
+- final publish orchestration unless the issue explicitly targets publish work
+
+### Publish and integration
+
+In scope:
+- publish staging shape inside Knowledge Forge
+- contract validation against `docs/publish-contract.md`
+- PR-oriented downstream handoff into FlowCommander
+
+Out of scope:
+- casual writes into `/Users/taylor/development/FlowCommander`
+- merging Knowledge Forge and FlowCommander responsibilities
+- silent automation that bypasses reviewability or provenance
+
 ## Working with FlowCommander safely
 
 Use the local FlowCommander repo for:
@@ -81,7 +135,10 @@ Future automation should preserve these guarantees rather than replacing them.
 
 When changing durable workflow behavior, keep these docs aligned:
 - `README.md`
+- `AGENTS.md`
+- `docs/codex-issue-runbook.md`
 - `docs/architecture.md`
+- `docs/evals.md`
 - `docs/repo-structure.md`
 - `docs/publish-contract.md`
 - `docs/agent-workflow.md`
