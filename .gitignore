@@ -1,13 +1,52 @@
+# Environment files
 .env
 .env.*
 !.env.example
 
-.venv/
-venv/
+# Python build and cache artifacts
 __pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+.coverage
+.coverage.*
 .pytest_cache/
 .ruff_cache/
+.mypy_cache/
+.tox/
+.nox/
+.hypothesis/
+build/
+dist/
+htmlcov/
+site/
+.eggs/
+*.egg
+*.egg-info/
+pip-wheel-metadata/
 
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# IDE and editor files
+.idea/
+.vscode/
+*.iml
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Local data artifacts
 data/**
+!data/
 !data/README.md
-!data/.gitkeep
+!data/**/
+!data/**/.gitkeep
