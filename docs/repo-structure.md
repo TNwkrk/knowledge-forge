@@ -12,6 +12,7 @@ Committed today:
 knowledge-forge/
 ├── AGENTS.md
 ├── README.md
+├── .pre-commit-config.yaml
 ├── .codex/
 │   ├── README.md
 │   └── config.toml
@@ -50,9 +51,10 @@ knowledge-forge/
     └── roadmap.md
 ```
 
-Only the package root, placeholder CLI, subpackage roots, and minimal test
-scaffold are implemented today. The deeper module paths below are still the
-intended future structure, not already-implemented pipeline code.
+Only the package root, placeholder CLI, subpackage roots, minimal test
+scaffold, and local lint/format hook configuration are implemented today. The
+deeper module paths below are still the intended future structure, not
+already-implemented pipeline code.
 
 ## Repository layout
 
@@ -60,6 +62,7 @@ intended future structure, not already-implemented pipeline code.
 knowledge-forge/
 ├── AGENTS.md
 ├── README.md
+├── .pre-commit-config.yaml
 ├── .codex/
 │   ├── README.md
 │   └── config.toml

@@ -48,10 +48,12 @@ Start here when orienting in the repo:
 
 ## Python project bootstrap
 
-Issue `#1` establishes the canonical Python package baseline for this repo:
+Issues `#1` and `#2` establish the canonical Python package and local developer
+tooling baseline for this repo:
 
 - `pyproject.toml` defines packaging metadata, runtime dependencies, and the
   development extras used today
+- `.pre-commit-config.yaml` defines the shared local lint and format hooks
 - `src/knowledge_forge/` is the package root for future implementation work
 - `tests/` contains the initial smoke-test scaffold for imports and the CLI
 
@@ -66,6 +68,8 @@ pip install -e ".[dev]"
 ### Current validation commands
 
 ```bash
+ruff check .
+ruff format --check .
 python -m pytest
 python -c "import knowledge_forge"
 python -m knowledge_forge.cli --help
