@@ -150,7 +150,8 @@ This repository currently establishes setup and conventions only.
 It does **not** yet promise:
 - a full publish automation pipeline
 - direct FlowCommander mutation
-- completed Python bootstrap or CI wiring
+- completed pipeline, inference, or publish implementation beyond the current
+  bootstrap baseline
 
 Agents should keep scope honest and build on the documented baseline instead of
 pretending later roadmap phases already exist.

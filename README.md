@@ -48,12 +48,14 @@ Start here when orienting in the repo:
 
 ## Python project bootstrap
 
-Issues `#1` and `#2` establish the canonical Python package and local developer
-tooling baseline for this repo:
+Issues `#1`, `#2`, and `#3` establish the canonical Python package, local
+developer tooling, and CI baseline for this repo:
 
 - `pyproject.toml` defines packaging metadata, runtime dependencies, and the
   development extras used today
 - `.pre-commit-config.yaml` defines the shared local lint and format hooks
+- `.github/workflows/ci.yaml` runs lint and test checks on pushes to `main` and
+  on pull requests
 - `src/knowledge_forge/` is the package root for future implementation work
 - `tests/` contains the initial smoke-test scaffold for imports and the CLI
 

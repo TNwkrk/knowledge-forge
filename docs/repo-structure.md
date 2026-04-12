@@ -3,8 +3,9 @@
 ## Current committed baseline
 
 The repository is currently in a bootstrap state. The checked-in baseline now
-includes the Python package foundation from Phase 1 Issue A-1 plus the planning
-and operating docs that were already present.
+includes the Python package foundation, local developer tooling, and CI wiring
+from Phase 1 Issues A-1 through A-3 plus the planning and operating docs that
+were already present.
 
 Committed today:
 
@@ -13,6 +14,9 @@ knowledge-forge/
 ├── AGENTS.md
 ├── README.md
 ├── .pre-commit-config.yaml
+├── .github/
+│   └── workflows/
+│       └── ci.yaml
 ├── .codex/
 │   ├── README.md
 │   └── config.toml
@@ -51,10 +55,10 @@ knowledge-forge/
     └── roadmap.md
 ```
 
-Only the package root, placeholder CLI, subpackage roots, minimal test
-scaffold, and local lint/format hook configuration are implemented today. The
-deeper module paths below are still the intended future structure, not
-already-implemented pipeline code.
+Only the package root, placeholder CLI, minimal test scaffold, local
+lint/format hooks, and CI quality gate are implemented today. The deeper module
+paths below are still the intended future structure, not already-implemented
+pipeline code.
 
 ## Repository layout
 
