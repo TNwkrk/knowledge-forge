@@ -1,2 +1,1 @@
 """Intake package."""
-

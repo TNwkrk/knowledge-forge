@@ -1,2 +1,1 @@
 """Publish package."""
-
