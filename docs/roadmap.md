@@ -4,6 +4,16 @@
 
 Each phase maps to one or more GitHub epics. Issues within each phase are sequenced so they can be worked one at a time without guessing context.
 
+Each issue should also carry a concrete acceptance signal before implementation
+starts. Prefer one or more of:
+- commands that must pass
+- schema or contract validation
+- expected generated artifact shape
+- docs-consistency checks when the issue is primarily operational or structural
+
+If a future issue cannot name an executable check yet, its acceptance criteria
+should still say what will be inspected or compared to determine completion.
+
 ---
 
 ### Phase 1 — Repo bootstrap and architecture foundation

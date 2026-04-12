@@ -18,14 +18,33 @@ Knowledge Forge is a separate system from FlowCommander. Hosted Supabase may sto
 This repository includes a lightweight local operating baseline so future Codex
 work can proceed without guessing repo conventions:
 - `AGENTS.md` defines repo-specific agent workflow and integration rules
+- `docs/codex-issue-runbook.md` defines the standard one-issue-at-a-time Codex
+  execution loop
 - `.codex/` contains repo-local Codex defaults
 - `.env.example` documents shared local environment variables
 - `data/README.md` defines the local staging area for generated artifacts
 - `docs/agent-workflow.md` explains the Knowledge Forge to FlowCommander working
   model
+- `docs/evals.md` defines the lightweight fixture and golden-file eval skeleton
 
 The setup is intentionally light. Durable behavior lives in repo docs rather
 than hidden local automation.
+
+## Canonical entry points
+
+Start here when orienting in the repo:
+- `README.md` explains what Knowledge Forge is and how it differs from
+  FlowCommander
+- `AGENTS.md` defines operating rules, safe-edit guidance, and delivery
+  expectations
+- `docs/codex-issue-runbook.md` defines the standard issue execution loop for
+  Codex work
+- `docs/roadmap.md` defines the phased implementation plan and issue sequence
+- `docs/publish-contract.md` defines the FlowCommander publish boundary
+- `docs/repo-structure.md` defines the intended repository layout and artifact
+  flow
+- `docs/agent-workflow.md` defines the two-repo workflow and phase boundaries
+- `docs/evals.md` defines where future fixture-driven validation should live
 
 ## Python project bootstrap
 

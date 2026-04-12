@@ -55,6 +55,48 @@ Primary priorities:
 - Treat `data/` as a local working area for generated artifacts. Commit only
   intentional scaffolding files such as `README.md` and `.gitkeep`.
 
+## Canonical References
+- `README.md` explains the repo's purpose, scope, and FlowCommander boundary.
+- `AGENTS.md` is the top-level operating rules document for agents.
+- `docs/codex-issue-runbook.md` is the standard issue-worker runbook.
+- `docs/roadmap.md` is the source of truth for phased issue sequencing.
+- `docs/publish-contract.md` defines the downstream publish contract.
+- `docs/repo-structure.md` defines the intended artifact layout.
+- `docs/evals.md` defines the current lightweight fixtures and golden-file
+  skeleton.
+
+## Phase Boundaries
+- **Bootstrap**: repo setup, docs, package scaffolding, local tooling, and basic
+  validation are in scope. Full parser, extraction, or publish implementations
+  are not.
+- **Pipeline / parsing**: intake, bucketing, OCR, parse artifact shape, and
+  parser validation are in scope. Topic-page generation, publish automation, and
+  downstream integration are not.
+- **Inference / extraction**: OpenAI client behavior, schema validation,
+  provenance, extraction repair, and extraction evals are in scope. FlowCommander
+  product behavior and final publish workflows are not.
+- **Publish / integration**: staging, publish-contract validation, manifesting,
+  and PR-oriented handoff into FlowCommander are in scope. Casual direct writes
+  into FlowCommander and unrelated product changes are not.
+
+## Safe Edit Zones
+- Usually safe to modify: `docs/`, `.codex/`, `tests/`, and small scaffolding in
+  `src/knowledge_forge/` that matches the current roadmap phase.
+- Edit with care: `pyproject.toml`, `.env.example`, `data/README.md`, and any
+  schema or artifact-shape docs that define downstream expectations.
+- Do not change unless the issue requires it: FlowCommander local clone content,
+  publish-boundary assumptions in `docs/publish-contract.md`, and repo-wide
+  structure or naming conventions already referenced by other docs.
+
+## Issue Acceptance Signals
+- Every issue should have a concrete acceptance signal before work starts.
+- Preferred signals are real commands, schema validation, expected artifact
+  shapes, or explicit docs-consistency checks.
+- If the repo does not yet have executable checks for an issue, document the
+  honest validation that was performed instead of implying stronger coverage.
+- Treat vague completion like "looks good" as insufficient for closing an issue
+  or opening a PR.
+
 ## Documentation Maintenance
 - When durable behavior, workflow boundaries, artifact layout, or publish rules
   change, update the relevant docs in `docs/`.
