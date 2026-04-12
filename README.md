@@ -27,6 +27,31 @@ work can proceed without guessing repo conventions:
 The setup is intentionally light. Durable behavior lives in repo docs rather
 than hidden local automation.
 
+## Python project bootstrap
+
+Issue `#1` establishes the canonical Python package baseline for this repo:
+
+- `pyproject.toml` defines packaging metadata, runtime dependencies, and the
+  development extras used today
+- `src/knowledge_forge/` is the package root for future implementation work
+- `tests/` contains the initial smoke-test scaffold for imports and the CLI
+
+### Local setup
+
+```bash
+python -m venv .venv
+source .venv/bin/activate
+pip install -e ".[dev]"
+```
+
+### Current validation commands
+
+```bash
+python -m pytest
+python -c "import knowledge_forge"
+python -m knowledge_forge.cli --help
+```
+
 ## Core model
 
 This system is **not**:

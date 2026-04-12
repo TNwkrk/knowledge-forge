@@ -2,8 +2,9 @@
 
 ## Current committed baseline
 
-The repository is currently in a bootstrap state. The checked-in baseline is
-intentionally small and focused on planning plus local operating conventions.
+The repository is currently in a bootstrap state. The checked-in baseline now
+includes the Python package foundation from Phase 1 Issue A-1 plus the planning
+and operating docs that were already present.
 
 Committed today:
 
@@ -14,8 +15,25 @@ knowledge-forge/
 ├── .codex/
 │   ├── README.md
 │   └── config.toml
+├── pyproject.toml
 ├── .env.example
 ├── .gitignore
+├── src/
+│   └── knowledge_forge/
+│       ├── __init__.py
+│       ├── cli.py
+│       ├── bucketing/
+│       ├── compile/
+│       ├── evaluation/
+│       ├── extract/
+│       ├── inference/
+│       ├── intake/
+│       ├── normalize/
+│       ├── parse/
+│       └── publish/
+├── tests/
+│   ├── conftest.py
+│   └── test_package.py
 ├── data/
 │   ├── .gitkeep
 │   └── README.md
@@ -28,8 +46,9 @@ knowledge-forge/
     └── roadmap.md
 ```
 
-This means agents should treat the Python package, CI, and pipeline paths below
-as the intended future structure, not as already-implemented code.
+Only the package root, placeholder CLI, subpackage roots, and minimal test
+scaffold are implemented today. The deeper module paths below are still the
+intended future structure, not already-implemented pipeline code.
 
 ## Repository layout
 
