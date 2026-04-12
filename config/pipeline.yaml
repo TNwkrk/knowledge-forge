@@ -1,0 +1,44 @@
+# Knowledge Forge pipeline configuration placeholder.
+# Keep stage defaults aligned with docs/repo-structure.md and phase boundaries.
+
+paths:
+  # Root working directory for local artifacts.
+  data_dir: ./data
+
+  # Downstream repo used only for inspection and publish preparation.
+  flowcommander_repo: /Users/taylor/development/FlowCommander
+
+stages:
+  intake:
+    enabled: true
+    manifests_dir: manifests
+    raw_dir: raw
+
+  normalize:
+    enabled: true
+    output_dir: normalized
+
+  parse:
+    enabled: true
+    output_dir: parsed
+    sections_dir: sections
+
+  extract:
+    enabled: true
+    output_dir: extracted
+    inference_config: config/inference.yaml
+
+  compile:
+    enabled: true
+    output_dir: compiled
+
+  publish:
+    enabled: true
+    output_dir: publish
+
+  evaluation:
+    enabled: true
+    output_dir: evaluation
+
+logging:
+  inference_logs_dir: inference_logs

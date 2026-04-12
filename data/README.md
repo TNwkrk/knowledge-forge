@@ -1,30 +1,49 @@
-# Knowledge Forge Local Data Directory
+# Knowledge Forge Data Directory
 
-This directory is the local working area for generated Knowledge Forge
-artifacts. It is intentionally gitignored except for this README and
-`.gitkeep`.
+`data/` is the local working area for pipeline artifacts. Its contents stay
+gitignored by default except for this README and the `.gitkeep` files that
+preserve the agreed directory layout.
 
-Current expectations:
-- source files and parsed outputs stay local by default
-- generated artifacts are staged here before any future publish workflow exists
-- reviewable publish-ready content should be assembled here first, not written
-  directly into the FlowCommander repository
+This layout follows [docs/repo-structure.md](../docs/repo-structure.md), which
+is the source of truth for artifact paths and naming conventions.
 
-Planned working subdirectories:
-- `manifests/`
-- `raw/`
-- `normalized/`
-- `parsed/`
-- `sections/`
-- `extracted/`
-- `compiled/`
-- `publish/`
-- `inference_logs/`
-- `evaluation/`
+## Directory layout
 
-FlowCommander-facing guidance:
-- The downstream publish target is FlowCommander `repo-wiki/knowledge/`.
-- Use the local FlowCommander clone at
-  `/Users/taylor/development/FlowCommander` for inspection when it exists.
-- Preserve provenance and reviewability so future PR-based publishing can show
-  where each generated artifact came from.
+- `manifests/` stores intake manifests and related registration metadata.
+- `raw/` stores original source PDFs or other source files.
+- `normalized/` stores OCR-normalized or otherwise cleaned source files.
+- `parsed/` stores parser outputs for each document under `parsed/{doc_id}/`.
+- `sections/` stores canonical section JSON files under `sections/{doc_id}/`.
+- `extracted/` stores extraction records under
+  `extracted/{doc_id}/{record_type}/`.
+- `compiled/` stores generated wiki artifacts. The repo structure doc reserves
+  subpaths such as `source-pages/`, `topic-pages/`, `overview-pages/`, and
+  `contradiction-notes/`.
+- `publish/` stores staged publish-ready output under `publish/{publish_run_id}/`
+  before any PR-based handoff to FlowCommander.
+- `inference_logs/` stores logged inference requests and responses, organized by
+  date and run.
+- `evaluation/` stores evaluation harness outputs and review artifacts.
+
+## Naming conventions
+
+- `doc_id`: `{manufacturer}-{family}-{doc_type}-{revision}` slugified
+- `section_id`: `{doc_id}--{section_type}--{sequence}`
+- `record_id`: `{section_id}--{record_type}--{sequence}`
+- `publish_run_id`: `kf-{YYYYMMDD}-{sequence}`
+
+Examples from the repo structure doc:
+
+- `doc_id`: `honeywell-dc1000-service-manual-rev3`
+- `section_id`: `honeywell-dc1000-service-manual-rev3--maintenance--003`
+- `record_id`:
+  `honeywell-dc1000-service-manual-rev3--maintenance--003--procedure--001`
+- `publish_run_id`: `kf-20240115-001`
+
+## Working rules
+
+- Keep generated artifacts in `data/` until there is an explicit publish flow.
+- Do not write directly into the local FlowCommander clone as a side effect of
+  normal Knowledge Forge runs.
+- Preserve provenance and reviewability so reruns and PR-based publication stay
+  auditable.
