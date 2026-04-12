@@ -1,0 +1,8 @@
+# Project-local Codex defaults for Knowledge Forge.
+
+# Keep Codex anchored to the Git worktree root when sessions start in subfolders.
+project_root_markers = [".git"]
+
+# Match the practical FlowCommander local setup while keeping approvals explicit.
+approval_policy = "on-request"
+sandbox_mode = "danger-full-access"

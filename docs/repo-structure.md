@@ -1,10 +1,45 @@
 # Knowledge Forge — Repository Structure and Artifact Flow
 
+## Current committed baseline
+
+The repository is currently in a bootstrap state. The checked-in baseline is
+intentionally small and focused on planning plus local operating conventions.
+
+Committed today:
+
+```
+knowledge-forge/
+├── AGENTS.md
+├── README.md
+├── .codex/
+│   ├── README.md
+│   └── config.toml
+├── .env.example
+├── .gitignore
+├── data/
+│   ├── .gitkeep
+│   └── README.md
+└── docs/
+    ├── agent-workflow.md
+    ├── architecture.md
+    ├── inference-layer.md
+    ├── publish-contract.md
+    ├── repo-structure.md
+    └── roadmap.md
+```
+
+This means agents should treat the Python package, CI, and pipeline paths below
+as the intended future structure, not as already-implemented code.
+
 ## Repository layout
 
 ```
 knowledge-forge/
+├── AGENTS.md
 ├── README.md
+├── .codex/
+│   ├── README.md
+│   └── config.toml
 ├── pyproject.toml
 ├── .env.example
 ├── .gitignore
@@ -12,6 +47,7 @@ knowledge-forge/
 │   └── workflows/
 │       └── ci.yaml
 ├── docs/
+│   ├── agent-workflow.md
 │   ├── architecture.md
 │   ├── roadmap.md
 │   ├── publish-contract.md
@@ -126,7 +162,21 @@ knowledge-forge/
 
 ## Data directory conventions
 
-The `data/` directory is gitignored (except for `.gitkeep` files and `README.md`). It contains all pipeline artifacts.
+The `data/` directory is gitignored (except for `.gitkeep` files and
+`README.md`). It contains local pipeline artifacts and future publish staging
+artifacts.
+
+### Current practical use
+
+Before the full pipeline exists, `data/` is still the right conceptual place
+for:
+- local manifests and source inputs
+- parser and extraction outputs
+- compiled working pages
+- publish-ready staged artifacts destined for FlowCommander review
+
+Agents should stage FlowCommander-facing output here first rather than writing
+directly into the downstream repository during normal work.
 
 ### Naming conventions
 
@@ -159,6 +209,8 @@ Each stage checks for existing artifacts before processing:
 
 | Path | Git status |
 |---|---|
+| `AGENTS.md` | Committed |
+| `.codex/` | Committed |
 | `docs/` | Committed |
 | `src/` | Committed |
 | `tests/` | Committed |
@@ -176,6 +228,7 @@ Each stage checks for existing artifacts before processing:
 OPENAI_API_KEY=sk-...
 KNOWLEDGE_FORGE_DATA_DIR=./data
 FLOWCOMMANDER_REPO=TNwkrk/FlowCommander
+FLOWCOMMANDER_REPO_PATH=/Users/taylor/development/FlowCommander
 GITHUB_TOKEN=ghp_...
 ```
 
@@ -183,5 +236,7 @@ GITHUB_TOKEN=ghp_...
 
 - `config/inference.yaml` — OpenAI model settings, rate limits, batch config
 - `config/pipeline.yaml` — stage-level defaults (OCR settings, parser selection, quality thresholds)
+
+Repo-local agent defaults live in `.codex/config.toml`.
 
 Config files are committed. Secrets come from environment variables only.
