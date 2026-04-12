@@ -1,0 +1,33 @@
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[project]
+name = "knowledge-forge"
+version = "0.1.0"
+description = "Bootstrap package for the Knowledge Forge manual digestion pipeline."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+  "click>=8.1,<9",
+  "docling",
+  "ocrmypdf",
+  "openai",
+  "prefect",
+  "pydantic>=2,<3",
+  "PyYAML>=6,<7",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8,<9",
+]
+
+[project.scripts]
+knowledge-forge = "knowledge_forge.cli:cli"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/knowledge_forge"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
