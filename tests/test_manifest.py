@@ -1,0 +1,118 @@
+"""Tests for intake manifest models and serialization helpers."""
+
+from __future__ import annotations
+
+import json
+from datetime import date
+from pathlib import Path
+
+import pytest
+
+from knowledge_forge.intake.manifest import (
+    BucketAssignment,
+    Document,
+    DocumentStatus,
+    DocumentVersion,
+    ManifestEntry,
+    compute_sha256,
+    derive_doc_id,
+)
+
+
+def build_document() -> Document:
+    return Document(
+        source_path=Path("/tmp/Honeywell Manual.pdf"),
+        checksum="A" * 64,
+        manufacturer="Honeywell",
+        family="DC1000",
+        model_applicability=["DC1000", "DC1100"],
+        document_type="Service Manual",
+        revision="Rev 3",
+        publication_date=date(2024, 1, 15),
+        language="EN",
+        priority=2,
+        status=DocumentStatus.REGISTERED,
+    )
+
+
+def build_manifest_entry() -> ManifestEntry:
+    document = build_document()
+    return ManifestEntry(
+        document=document,
+        document_version=DocumentVersion(
+            doc_id=document.doc_id,
+            revision=document.revision,
+            checksum=document.checksum,
+            source_path=document.source_path,
+            publication_date=document.publication_date,
+        ),
+        bucket_assignments=[
+            BucketAssignment(
+                doc_id=document.doc_id,
+                bucket_id="honeywell/dc1000/service-manual",
+                dimension="document_type",
+                value=document.document_type,
+            )
+        ],
+    )
+
+
+def test_document_validation_normalizes_fields() -> None:
+    document = build_document()
+
+    assert document.checksum == "a" * 64
+    assert document.language == "en"
+    assert document.doc_id == "honeywell-dc1000-service-manual-rev-3"
+
+
+def test_document_validation_rejects_invalid_language() -> None:
+    with pytest.raises(ValueError, match="two-letter ISO 639-1 code"):
+        Document(
+            source_path=Path("/tmp/manual.pdf"),
+            checksum="b" * 64,
+            manufacturer="Honeywell",
+            family="DC1000",
+            model_applicability=["DC1000"],
+            document_type="Service Manual",
+            revision="Rev 3",
+            language="eng",
+        )
+
+
+def test_manifest_round_trip_yaml() -> None:
+    manifest = build_manifest_entry()
+
+    restored = ManifestEntry.from_yaml(manifest.to_yaml())
+
+    assert restored == manifest
+    assert restored.bucket_assignments[0].bucket_id == "honeywell/dc1000/service-manual"
+
+
+def test_manifest_round_trip_json() -> None:
+    manifest = build_manifest_entry()
+    payload = json.loads(manifest.to_json())
+
+    restored = ManifestEntry.from_json(json.dumps(payload))
+
+    assert restored == manifest
+    assert "doc_id" not in payload
+    assert restored.doc_id == manifest.doc_id
+
+
+def test_doc_id_derivation_is_stable_and_slug_safe() -> None:
+    assert (
+        derive_doc_id(
+            manufacturer="Honeywell / Home",
+            family="DC 1000+",
+            document_type="Quick Start Guide",
+            revision="Rev. B",
+        )
+        == "honeywell-home-dc-1000-quick-start-guide-rev-b"
+    )
+
+
+def test_compute_sha256_matches_expected_digest(tmp_path: Path) -> None:
+    source = tmp_path / "fixture.txt"
+    source.write_text("knowledge-forge\n", encoding="utf-8")
+
+    assert compute_sha256(source) == "be2325faa73eac9661c74553092d95995ea400633f78563157812b0462a110e7"
