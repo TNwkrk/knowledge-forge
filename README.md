@@ -13,6 +13,20 @@ Its job is to:
 
 Knowledge Forge is a separate system from FlowCommander. Hosted Supabase may store approved outputs later for retrieval, but it is **not** responsible for the digestion pipeline.
 
+## Codex-ready baseline
+
+This repository includes a lightweight local operating baseline so future Codex
+work can proceed without guessing repo conventions:
+- `AGENTS.md` defines repo-specific agent workflow and integration rules
+- `.codex/` contains repo-local Codex defaults
+- `.env.example` documents shared local environment variables
+- `data/README.md` defines the local staging area for generated artifacts
+- `docs/agent-workflow.md` explains the Knowledge Forge to FlowCommander working
+  model
+
+The setup is intentionally light. Durable behavior lives in repo docs rather
+than hidden local automation.
+
 ## Core model
 
 This system is **not**:
@@ -72,6 +86,20 @@ Required flow:
 6. Humans review and merge
 
 That keeps the process auditable, reviewable, and reversible.
+
+## Working with FlowCommander locally
+
+When available, use the local FlowCommander clone at
+`/Users/taylor/development/FlowCommander` as the downstream reference point.
+
+Use it to:
+- inspect current `repo-wiki/knowledge/` structure
+- validate that generated artifacts fit downstream expectations
+- prepare publish-ready changes before opening a PR
+
+Do not treat local repo access as permission to casually edit FlowCommander from
+intermediate output. The approval boundary remains the FlowCommander PR review
+process.
 
 ## Goals
 
@@ -260,6 +288,13 @@ Every extracted record should preserve provenance:
 - extraction version
 - confidence
 - bucket context
+
+## Key docs
+
+- `AGENTS.md` — repo-specific agent operating conventions
+- `docs/agent-workflow.md` — two-repo working model and local workflow
+- `docs/publish-contract.md` — downstream FlowCommander publish boundary
+- `docs/repo-structure.md` — current scaffold and planned artifact layout
 
 ## Contradiction and supersession
 

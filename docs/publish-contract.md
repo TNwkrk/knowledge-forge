@@ -4,6 +4,10 @@
 
 This document defines the boundary between Knowledge Forge and FlowCommander. Knowledge Forge never directly mutates FlowCommander. All output flows through a staged publish step that opens a pull request for human review.
 
+This is both a GitHub workflow rule and a local working rule. Access to a local
+FlowCommander clone is for inspection and publish preparation, not for casual
+hand-edits from intermediate output.
+
 ## Target repository
 
 - **Repo:** `TNwkrk/FlowCommander` (or the configured target)
@@ -11,6 +15,20 @@ This document defines the boundary between Knowledge Forge and FlowCommander. Kn
 - **Subtree:** `repo-wiki/knowledge/`
 
 Knowledge Forge only writes inside `repo-wiki/knowledge/`. It never touches any other FlowCommander path.
+
+## Local downstream reference
+
+When available, the expected local downstream reference clone is:
+
+`/Users/taylor/development/FlowCommander`
+
+Agents may use that local clone to:
+- inspect current `repo-wiki/knowledge/` structure
+- compare staged output against downstream expectations
+- prepare or validate PR-ready artifact sets
+
+Agents should not treat the local clone as a scratchpad for unreviewed output.
+The publish boundary remains a FlowCommander PR.
 
 ## Target folder structure
 
@@ -66,6 +84,11 @@ compilation_version: "{version}"
 ---
 ```
 
+Published output should also preserve enough provenance to explain:
+- which source documents contributed to the page
+- which Knowledge Forge publish run produced the page
+- what changed relative to the staged publish set
+
 ## Publish manifest
 
 Each publish run produces a manifest at `_manifests/{publish_run_id}.json`:
@@ -114,6 +137,8 @@ The PR body includes:
 - Count of new, updated, and removed files
 - Link back to the publish manifest
 - Any warnings (low confidence, contradiction candidates)
+- A clear note that the content was generated in Knowledge Forge and is being
+  proposed to FlowCommander for review
 
 ### Labels
 
@@ -130,6 +155,8 @@ Before opening a PR, the publish workflow validates:
 3. **Frontmatter present** — every Markdown file has valid YAML frontmatter with required fields
 4. **Slug stability** — slugs match the expected derivation from manifest fields
 5. **No duplication** — no two files claim the same canonical identity
+6. **Provenance retained** — manifests and metadata are sufficient for reviewers
+   to trace generated output back to source inputs
 
 ## Rollback guidance
 
@@ -148,3 +175,10 @@ Re-running the publish workflow for the same extraction outputs produces the sam
 - Automated PR approval workflows based on confidence thresholds
 - Webhook notification to FlowCommander on publish
 - Supabase sync after PR merge (owned by FlowCommander, not Knowledge Forge)
+
+## Current scope note
+
+This contract defines the intended workflow boundary now, even before full
+publish automation exists in the repository. Until that automation lands,
+contributors and agents should use it as the governing model for any
+FlowCommander-facing staging or planning work.
