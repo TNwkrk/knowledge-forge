@@ -28,6 +28,7 @@ dev = [
 
 [project.scripts]
 knowledge-forge = "knowledge_forge.cli:cli"
+kf = "knowledge_forge.cli:cli"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/knowledge_forge"]
