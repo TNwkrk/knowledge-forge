@@ -33,6 +33,9 @@ knowledge-forge/
 │       ├── extract/
 │       ├── inference/
 │       ├── intake/
+│       │   ├── __init__.py
+│       │   ├── importer.py
+│       │   └── manifest.py
 │       ├── normalize/
 │       ├── parse/
 │       └── publish/
@@ -40,6 +43,7 @@ knowledge-forge/
 │   ├── conftest.py
 │   ├── fixtures/
 │   ├── golden/
+│   ├── test_intake_cli.py
 │   └── test_package.py
 ├── data/
 │   ├── .gitkeep
@@ -55,10 +59,9 @@ knowledge-forge/
     └── roadmap.md
 ```
 
-Only the package root, placeholder CLI, minimal test scaffold, local
-lint/format hooks, and CI quality gate are implemented today. The deeper module
-paths below are still the intended future structure, not already-implemented
-pipeline code.
+The package root, manifest schema, intake CLI, local lint/format hooks, and CI
+quality gate are implemented today. Most deeper module paths below are still
+the intended future structure, not already-implemented pipeline code.
 
 ## Repository layout
 
