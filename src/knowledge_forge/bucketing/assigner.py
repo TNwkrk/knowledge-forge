@@ -93,14 +93,18 @@ def bucket_unassigned_manifests(data_dir: Path) -> list[BucketingResult]:
 def _apply_bucket_state(manifest: ManifestEntry) -> ManifestEntry:
     """Return a manifest with canonical bucket assignments and status."""
     assignments = assign_buckets(manifest)
-    next_status = DocumentStatus.BUCKETED if assignments else manifest.document.status
+    updated_manifest = manifest
+    if assignments:
+        updated_manifest = manifest.transition_status(
+            DocumentStatus.BUCKETED,
+            reason="bucket assignments generated",
+        )
 
-    if manifest.bucket_assignments == assignments and manifest.document.status == next_status:
+    if updated_manifest.bucket_assignments == assignments and manifest.bucket_assignments == assignments:
         return manifest
 
-    return manifest.model_copy(
+    return updated_manifest.model_copy(
         update={
-            "document": manifest.document.model_copy(update={"status": next_status}),
             "bucket_assignments": assignments,
         }
     )

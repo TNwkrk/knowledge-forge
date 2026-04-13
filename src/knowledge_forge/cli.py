@@ -29,6 +29,7 @@ def intake() -> None:
 
 @intake.command("register")
 @click.argument("pdf_path", type=click.Path(exists=True, dir_okay=False, path_type=Path))
+@click.option("--force", is_flag=True, help="Re-register a duplicate checksum as a new document version.")
 @click.option("--manufacturer", type=str, help="Document manufacturer.")
 @click.option("--family", type=str, help="Product family or series.")
 @click.option(
@@ -48,6 +49,7 @@ def intake() -> None:
 @click.option("--priority", type=click.IntRange(min=1), help="Processing priority where 1 is highest.")
 def intake_register(
     pdf_path: Path,
+    force: bool,
     manufacturer: str | None,
     family: str | None,
     models: tuple[str, ...],
@@ -71,6 +73,7 @@ def intake_register(
         publication_date=_coerce_publication_date(publication_date),
         language=language or click.prompt("Language", default="en", show_default=True),
         priority=priority if priority is not None else click.prompt("Priority", default=3, type=int, show_default=True),
+        force=force,
     )
 
     try:
@@ -125,6 +128,25 @@ def intake_inspect(doc_id: str) -> None:
         raise click.ClickException(str(exc)) from exc
 
     click.echo(manifest.to_yaml().strip())
+
+
+@intake.command("status")
+@click.argument("doc_id", type=str)
+def intake_status(doc_id: str) -> None:
+    """Show the current lifecycle status and transition history for a document."""
+    try:
+        manifest = load_manifest(get_data_dir(), doc_id)
+    except FileNotFoundError as exc:
+        raise click.ClickException(str(exc)) from exc
+
+    click.echo(f"Document: {manifest.doc_id}")
+    click.echo(f"Current status: {manifest.document.status.value}")
+    click.echo(f"Current version: {manifest.document_version.version_id}")
+    click.echo("History:")
+    for transition in manifest.status_history:
+        source = transition.from_status.value if transition.from_status is not None else "none"
+        reason = f" ({transition.reason})" if transition.reason else ""
+        click.echo(f"- {transition.changed_at.isoformat()} {source} -> {transition.to_status.value}{reason}")
 
 
 @intake.command("bucket")

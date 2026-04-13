@@ -166,7 +166,8 @@ knowledge-forge/
 └── data/                            # gitignored except conventions
     ├── .gitkeep
     ├── README.md                    # documents the data directory layout
-    ├── manifests/                   # intake manifests
+    ├── manifests/                   # intake manifests and checksum index
+    │   └── checksum-index.yaml
     ├── raw/                         # original source PDFs
     ├── normalized/                  # OCR-normalized PDFs
     ├── parsed/                      # parser outputs per document
