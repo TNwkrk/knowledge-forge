@@ -11,7 +11,8 @@ is the source of truth for artifact paths and naming conventions.
 
 - `manifests/` stores intake manifests and related registration metadata.
 - `raw/` stores original source PDFs or other source files.
-- `normalized/` stores OCR-normalized or otherwise cleaned source files.
+- `normalized/` stores OCR-normalized or otherwise cleaned source files plus
+  `*.meta.json` metadata for each normalization run.
 - `parsed/` stores parser outputs for each document under `parsed/{doc_id}/`.
 - `sections/` stores canonical section JSON files under `sections/{doc_id}/`.
 - `extracted/` stores extraction records under

@@ -15,6 +15,7 @@ from knowledge_forge.intake.importer import (
     load_manifest,
     register_document,
 )
+from knowledge_forge.normalize import normalize_document
 
 
 @click.group(help="Knowledge Forge command line interface.")
@@ -179,6 +180,37 @@ def intake_bucket(doc_id: str | None, bucket_all: bool) -> None:
     click.echo(f"Bucketed {result.manifest.doc_id}")
     click.echo(f"Assignments: {len(result.manifest.bucket_assignments)}")
     click.echo(f"Manifest: {result.manifest_path}")
+
+
+@cli.command("normalize")
+@click.argument("doc_id", required=False, type=str)
+@click.option("--all", "normalize_all", is_flag=True, help="Normalize every registered manifest.")
+def normalize(doc_id: str | None, normalize_all: bool) -> None:
+    """Run OCR normalization for one or more documents."""
+    if normalize_all and doc_id is not None:
+        raise click.ClickException("pass either a doc_id or --all, not both")
+    if not normalize_all and doc_id is None:
+        raise click.ClickException("pass a doc_id or use --all")
+
+    data_dir = get_data_dir()
+    if normalize_all:
+        manifests = list_manifests(data_dir)
+        if not manifests:
+            click.echo("No manifests found.")
+            return
+
+        for manifest in manifests:
+            result = normalize_document(manifest.doc_id, data_dir=data_dir)
+            click.echo(f"Normalized {manifest.doc_id} -> {result.output_path}")
+        return
+
+    try:
+        result = normalize_document(doc_id, data_dir=data_dir)
+    except FileNotFoundError as exc:
+        raise click.ClickException(str(exc)) from exc
+
+    click.echo(f"Normalized {doc_id}")
+    click.echo(f"Output: {result.output_path}")
 
 
 def _prompt_models() -> list[str]:
