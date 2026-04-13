@@ -9,7 +9,7 @@ from pathlib import Path
 from re import sub
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field, computed_field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, computed_field, field_validator, model_validator
 from yaml import safe_dump, safe_load
 
 
@@ -153,6 +153,7 @@ class DocumentVersion(ManifestModel):
     """Version metadata for a specific document revision."""
 
     doc_id: str = Field(min_length=1)
+    version_number: int = Field(default=1, ge=1)
     revision: str = Field(min_length=1)
     checksum: str = Field(min_length=64, max_length=64)
     source_path: Path
@@ -178,7 +179,32 @@ class DocumentVersion(ManifestModel):
     @property
     def version_id(self) -> str:
         """Stable identifier for the concrete document revision."""
-        return f"{self.doc_id}--{slugify(self.revision)}"
+        return f"{self.doc_id}--v{self.version_number:03d}"
+
+
+class StatusTransition(ManifestModel):
+    """Audit entry for a document lifecycle change."""
+
+    from_status: DocumentStatus | None = None
+    to_status: DocumentStatus
+    changed_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    reason: str | None = None
+
+
+STATUS_ORDER: tuple[DocumentStatus, ...] = (
+    DocumentStatus.REGISTERED,
+    DocumentStatus.BUCKETED,
+    DocumentStatus.NORMALIZED,
+    DocumentStatus.PARSED,
+    DocumentStatus.EXTRACTED,
+    DocumentStatus.COMPILED,
+    DocumentStatus.PUBLISHED,
+)
+
+
+def can_transition_status(current: DocumentStatus, target: DocumentStatus) -> bool:
+    """Return True when the requested lifecycle transition moves forward."""
+    return STATUS_ORDER.index(target) >= STATUS_ORDER.index(current)
 
 
 class BucketAssignment(ManifestModel):
@@ -205,10 +231,64 @@ class ManifestEntry(ManifestModel):
 
     document: Document
     document_version: DocumentVersion
+    document_versions: list[DocumentVersion] = Field(default_factory=list)
+    status_history: list[StatusTransition] = Field(default_factory=list)
     bucket_assignments: list[BucketAssignment] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def hydrate_derived_lists(self) -> "ManifestEntry":
+        """Backfill legacy manifests into the current multi-version shape."""
+        if not self.document_versions:
+            self.document_versions = [self.document_version]
+        elif self.document_version.version_id != self.document_versions[-1].version_id:
+            self.document_versions = [*self.document_versions, self.document_version]
+
+        if not self.status_history:
+            self.status_history = [
+                StatusTransition(
+                    from_status=None,
+                    to_status=self.document.status,
+                    reason="initial registration",
+                )
+            ]
+
+        return self
 
     @computed_field  # type: ignore[misc]
     @property
     def doc_id(self) -> str:
         """Expose the canonical document identifier at the manifest level."""
         return self.document.doc_id
+
+    def next_version_number(self) -> int:
+        """Return the next available version number for this document."""
+        return max((version.version_number for version in self.document_versions), default=0) + 1
+
+    def transition_status(
+        self,
+        target_status: DocumentStatus,
+        *,
+        reason: str | None = None,
+        force: bool = False,
+    ) -> "ManifestEntry":
+        """Return a manifest with an updated lifecycle status and audit entry."""
+        current_status = self.document.status
+        if target_status == current_status and not force:
+            return self
+
+        if not force and not can_transition_status(current_status, target_status):
+            raise ValueError(f"cannot move status backward from '{current_status.value}' to '{target_status.value}'")
+
+        return self.model_copy(
+            update={
+                "document": self.document.model_copy(update={"status": target_status}),
+                "status_history": [
+                    *self.status_history,
+                    StatusTransition(
+                        from_status=current_status,
+                        to_status=target_status,
+                        reason=reason,
+                    ),
+                ],
+            }
+        )

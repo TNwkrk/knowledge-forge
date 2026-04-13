@@ -99,6 +99,23 @@ def test_manifest_round_trip_json() -> None:
     assert restored.doc_id == manifest.doc_id
 
 
+def test_manifest_hydrates_legacy_version_and_status_history() -> None:
+    manifest = build_manifest_entry()
+
+    assert [version.version_number for version in manifest.document_versions] == [1]
+    assert len(manifest.status_history) == 1
+    assert manifest.status_history[0].from_status is None
+    assert manifest.status_history[0].to_status == DocumentStatus.REGISTERED
+    assert manifest.status_history[0].reason == "initial registration"
+
+
+def test_transition_status_rejects_backward_changes_without_force() -> None:
+    manifest = build_manifest_entry().transition_status(DocumentStatus.BUCKETED, reason="bucketed")
+
+    with pytest.raises(ValueError, match="cannot move status backward"):
+        manifest.transition_status(DocumentStatus.REGISTERED, reason="reset")
+
+
 def test_doc_id_derivation_is_stable_and_slug_safe() -> None:
     assert (
         derive_doc_id(
