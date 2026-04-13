@@ -7,6 +7,7 @@ from pathlib import Path
 
 import click
 
+from knowledge_forge.bucketing.assigner import bucket_manifest, bucket_unassigned_manifests
 from knowledge_forge.intake.importer import (
     RegistrationRequest,
     get_data_dir,
@@ -124,6 +125,38 @@ def intake_inspect(doc_id: str) -> None:
         raise click.ClickException(str(exc)) from exc
 
     click.echo(manifest.to_yaml().strip())
+
+
+@intake.command("bucket")
+@click.argument("doc_id", required=False, type=str)
+@click.option("--all", "bucket_all", is_flag=True, help="Bucket every manifest without assignments.")
+def intake_bucket(doc_id: str | None, bucket_all: bool) -> None:
+    """Assign deterministic buckets to one or more manifests."""
+    if bucket_all and doc_id is not None:
+        raise click.ClickException("pass either a doc_id or --all, not both")
+    if not bucket_all and doc_id is None:
+        raise click.ClickException("pass a doc_id or use --all")
+
+    data_dir = get_data_dir()
+    if bucket_all:
+        results = bucket_unassigned_manifests(data_dir)
+        if not results:
+            click.echo("No unassigned manifests found.")
+            return
+
+        click.echo(f"Bucketed {len(results)} manifest(s).")
+        for result in results:
+            click.echo(f"{result.manifest.doc_id}\t{len(result.manifest.bucket_assignments)} assignments")
+        return
+
+    try:
+        result = bucket_manifest(data_dir, doc_id)
+    except FileNotFoundError as exc:
+        raise click.ClickException(str(exc)) from exc
+
+    click.echo(f"Bucketed {result.manifest.doc_id}")
+    click.echo(f"Assignments: {len(result.manifest.bucket_assignments)}")
+    click.echo(f"Manifest: {result.manifest_path}")
 
 
 def _prompt_models() -> list[str]:
