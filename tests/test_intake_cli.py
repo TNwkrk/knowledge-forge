@@ -187,3 +187,93 @@ def test_intake_register_prompts_for_missing_fields(tmp_path: Path) -> None:
 
     assert result.exit_code == 0
     assert "Registered honeywell-dc1000-service-manual-rev-3" in result.output
+
+
+def test_intake_bucket_updates_single_manifest(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    source = _create_pdf(tmp_path / "manual.pdf")
+    runner = CliRunner()
+    env = {"KNOWLEDGE_FORGE_DATA_DIR": str(data_dir)}
+
+    register = runner.invoke(
+        cli,
+        [
+            "intake",
+            "register",
+            str(source),
+            "--manufacturer",
+            "Honeywell",
+            "--family",
+            "DC1000",
+            "--model",
+            "DC1000",
+            "--model",
+            "DC1100",
+            "--document-type",
+            "Service Manual",
+            "--revision",
+            "Rev 3",
+            "--publication-date",
+            "2024-01-15",
+            "--language",
+            "en",
+            "--priority",
+            "2",
+        ],
+        env=env,
+    )
+    assert register.exit_code == 0
+
+    bucket = runner.invoke(cli, ["intake", "bucket", "honeywell-dc1000-service-manual-rev-3"], env=env)
+
+    assert bucket.exit_code == 0
+    assert "Bucketed honeywell-dc1000-service-manual-rev-3" in bucket.output
+    assert "Assignments: 7" in bucket.output
+
+    manifest = ManifestEntry.from_yaml(
+        (data_dir / "manifests" / "honeywell-dc1000-service-manual-rev-3.yaml").read_text(encoding="utf-8")
+    )
+    assert manifest.document.status.value == "bucketed"
+    assert len(manifest.bucket_assignments) == 7
+
+
+def test_intake_bucket_all_only_processes_unassigned_manifests(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    runner = CliRunner()
+    env = {"KNOWLEDGE_FORGE_DATA_DIR": str(data_dir)}
+
+    for revision in ("Rev 3", "Rev 4"):
+        source = _create_pdf(tmp_path / f"{revision}.pdf", content=f"%PDF-1.4\n% {revision}\n".encode())
+        register = runner.invoke(
+            cli,
+            [
+                "intake",
+                "register",
+                str(source),
+                "--manufacturer",
+                "Honeywell",
+                "--family",
+                "DC1000",
+                "--model",
+                "DC1000",
+                "--document-type",
+                "Service Manual",
+                "--revision",
+                revision,
+                "--language",
+                "en",
+                "--priority",
+                "2",
+            ],
+            env=env,
+        )
+        assert register.exit_code == 0
+
+    first_bucket = runner.invoke(cli, ["intake", "bucket", "honeywell-dc1000-service-manual-rev-3"], env=env)
+    assert first_bucket.exit_code == 0
+
+    bucket_all = runner.invoke(cli, ["intake", "bucket", "--all"], env=env)
+
+    assert bucket_all.exit_code == 0
+    assert "Bucketed 1 manifest(s)." in bucket_all.output
+    assert "honeywell-dc1000-service-manual-rev-4\t6 assignments" in bucket_all.output
