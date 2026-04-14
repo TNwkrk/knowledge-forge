@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import shutil
 import time
 from dataclasses import dataclass
@@ -11,7 +10,7 @@ from typing import Any
 
 import ocrmypdf
 from ocrmypdf.pdfinfo import PdfInfo
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict
 from yaml import safe_load
 
 from knowledge_forge.intake.importer import get_data_dir, load_manifest
@@ -28,7 +27,6 @@ class NormalizationResult(BaseModel):
     page_count: int
     ocr_applied: bool
     pages_ocrd: int
-    confidence_scores: list[float] = Field(default_factory=list)
     processing_time: float
 
 
@@ -70,7 +68,6 @@ def normalize_document(doc_id: str, *, data_dir: Path | None = None) -> Normaliz
     text_pages = sum(1 for page in pdf_info.pages if page and page.has_text)
     needs_ocr = text_pages != page_count
     pages_requiring_ocr = page_count - text_pages if needs_ocr else 0
-    confidence_scores: list[float] = []
 
     if needs_ocr:
         ocrmypdf.ocr(
@@ -91,7 +88,6 @@ def normalize_document(doc_id: str, *, data_dir: Path | None = None) -> Normaliz
         page_count=page_count,
         ocr_applied=needs_ocr,
         pages_ocrd=pages_requiring_ocr,
-        confidence_scores=confidence_scores,
         processing_time=processing_time,
     )
 
@@ -153,6 +149,6 @@ try:  # pragma: no cover - optional import boundary
         """Prefect flow wrapper for OCR normalization."""
         return normalize_document(doc_id, data_dir=data_dir if data_dir else None)
 
-except Exception:  # pragma: no cover
+except ImportError:  # pragma: no cover
     # Prefect is optional at runtime; skip flow registration if unavailable.
     pass

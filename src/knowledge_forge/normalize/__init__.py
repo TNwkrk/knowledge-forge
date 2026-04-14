@@ -1,5 +1,12 @@
 """Normalization package."""
 
-from knowledge_forge.normalize.ocr import NormalizationResult, normalization_flow, normalize_document
+from knowledge_forge.normalize import ocr as _ocr
 
-__all__ = ["NormalizationResult", "normalize_document", "normalization_flow"]
+NormalizationResult = _ocr.NormalizationResult
+normalize_document = _ocr.normalize_document
+
+__all__ = ["NormalizationResult", "normalize_document"]
+
+if hasattr(_ocr, "normalization_flow"):
+    normalization_flow = _ocr.normalization_flow
+    __all__.append("normalization_flow")
