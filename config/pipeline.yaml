@@ -21,6 +21,10 @@ stages:
     deskew: true
     clean: true
     optimize: 1
+    text_density_threshold: 1.0
+    confidence_density_target: 5.0
+    bypass_document_types: []
+    skip_vector_pages: true
 
   parse:
     enabled: true

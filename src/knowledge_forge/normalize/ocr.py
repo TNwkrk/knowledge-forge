@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import shutil
 import time
+from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 import ocrmypdf
 from ocrmypdf.pdfinfo import PdfInfo
+from pdfminer.high_level import extract_text
 from pydantic import BaseModel, ConfigDict
 from yaml import safe_load
 
@@ -28,6 +30,20 @@ class NormalizationResult(BaseModel):
     ocr_applied: bool
     pages_ocrd: int
     processing_time: float
+    page_metadata: list["PageNormalizationMetadata"]
+
+
+class PageNormalizationMetadata(BaseModel):
+    """Per-page OCR analysis captured during normalization."""
+
+    page_number: int
+    has_text_before: bool
+    has_vector: bool
+    text_density_before: float
+    text_density_after: float
+    ocr_applied: bool
+    confidence: float
+    bypass_reason: str | None = None
 
 
 @dataclass(frozen=True)
@@ -38,6 +54,10 @@ class NormalizationSettings:
     deskew: bool = True
     clean: bool = True
     optimize: int = 1
+    text_density_threshold: float = 1.0
+    confidence_density_target: float = 5.0
+    bypass_document_types: tuple[str, ...] = ()
+    skip_vector_pages: bool = True
 
 
 def normalize_document(doc_id: str, *, data_dir: Path | None = None) -> NormalizationResult:
@@ -61,9 +81,9 @@ def normalize_document(doc_id: str, *, data_dir: Path | None = None) -> Normaliz
     start = time.perf_counter()
     pdf_info = PdfInfo(raw_path)
     page_count = len(pdf_info.pages)
-    text_pages = sum(1 for page in pdf_info.pages if page and page.has_text)
-    needs_ocr = text_pages != page_count
-    pages_requiring_ocr = page_count - text_pages if needs_ocr else 0
+    page_analyses = _analyze_pages(raw_path, pdf_info, manifest.document.document_type, settings)
+    pages_requiring_ocr = sum(1 for page in page_analyses if page["ocr_applied"])
+    needs_ocr = pages_requiring_ocr > 0
 
     if needs_ocr:
         ocrmypdf.ocr(
@@ -73,9 +93,12 @@ def normalize_document(doc_id: str, *, data_dir: Path | None = None) -> Normaliz
             deskew=settings.deskew,
             clean=settings.clean,
             optimize=settings.optimize,
+            pages=_serialize_pages(page["page_number"] for page in page_analyses if page["ocr_applied"]),
         )
     else:
         shutil.copy2(raw_path, output_path)
+
+    page_metadata = _build_page_metadata(output_path, page_analyses, settings)
 
     processing_time = time.perf_counter() - start
     result = NormalizationResult(
@@ -85,6 +108,7 @@ def normalize_document(doc_id: str, *, data_dir: Path | None = None) -> Normaliz
         ocr_applied=needs_ocr,
         pages_ocrd=pages_requiring_ocr,
         processing_time=processing_time,
+        page_metadata=page_metadata,
     )
 
     meta_path.write_text(result.model_dump_json(indent=2), encoding="utf-8")
@@ -110,9 +134,19 @@ def _load_normalization_settings(config_path: Path | None = None) -> Normalizati
     normalize_config: dict[str, Any] = payload.get("stages", {}).get("normalize", {}) or {}
     defaults = NormalizationSettings()
     allowed: dict[str, Any] = {}
-    for key in ("language", "deskew", "clean", "optimize"):
+    for key in (
+        "language",
+        "deskew",
+        "clean",
+        "optimize",
+        "text_density_threshold",
+        "confidence_density_target",
+        "skip_vector_pages",
+    ):
         if key in normalize_config:
             allowed[key] = normalize_config[key]
+    if "bypass_document_types" in normalize_config:
+        allowed["bypass_document_types"] = tuple(str(value) for value in normalize_config["bypass_document_types"])
     return NormalizationSettings(**allowed) if allowed else defaults
 
 
@@ -134,6 +168,97 @@ def _persist_manifest_status(manifest: ManifestEntry, data_dir: Path) -> None:
 
     manifest_path = data_dir / "manifests" / f"{manifest.doc_id}.yaml"
     manifest_path.write_text(normalized.to_yaml(), encoding="utf-8")
+
+
+def inspect_normalization(doc_id: str, *, data_dir: Path | None = None) -> NormalizationResult:
+    """Load persisted normalization metadata for CLI inspection."""
+    resolved_data_dir = get_data_dir(data_dir)
+    meta_path = resolved_data_dir / "normalized" / f"{doc_id}.meta.json"
+    existing = _load_normalization_meta(meta_path)
+    if existing is None:
+        raise FileNotFoundError(f"normalization metadata not found for doc_id '{doc_id}'")
+    return existing
+
+
+def _analyze_pages(
+    raw_path: Path,
+    pdf_info: PdfInfo,
+    document_type: str,
+    settings: NormalizationSettings,
+) -> list[dict[str, Any]]:
+    """Decide which pages should receive OCR and record baseline metrics."""
+    bypass_document_type = document_type.casefold() in {
+        value.strip().casefold() for value in settings.bypass_document_types if value.strip()
+    }
+    analyses: list[dict[str, Any]] = []
+    for index, page in enumerate(pdf_info.pages, start=1):
+        density_before = _extract_text_density(raw_path, index - 1, page)
+        has_text_before = bool(page and page.has_text)
+        has_vector = bool(page and page.has_vector)
+        bypass_reason: str | None = None
+        ocr_applied = False
+        if bypass_document_type:
+            bypass_reason = "document_type_bypass"
+        elif settings.skip_vector_pages and has_vector and not has_text_before:
+            bypass_reason = "vector_page_bypass"
+        else:
+            ocr_applied = (not has_text_before) or density_before < settings.text_density_threshold
+        analyses.append(
+            {
+                "page_number": index,
+                "has_text_before": has_text_before,
+                "has_vector": has_vector,
+                "text_density_before": density_before,
+                "ocr_applied": ocr_applied,
+                "bypass_reason": bypass_reason,
+            }
+        )
+    return analyses
+
+
+def _build_page_metadata(
+    output_path: Path,
+    page_analyses: list[dict[str, Any]],
+    settings: NormalizationSettings,
+) -> list[PageNormalizationMetadata]:
+    """Measure post-normalization text density and finalize page metadata."""
+    normalized_info = PdfInfo(output_path)
+    metadata: list[PageNormalizationMetadata] = []
+    for analysis, page in zip(page_analyses, normalized_info.pages, strict=True):
+        density_after = _extract_text_density(output_path, analysis["page_number"] - 1, page)
+        metadata.append(
+            PageNormalizationMetadata(
+                page_number=analysis["page_number"],
+                has_text_before=analysis["has_text_before"],
+                has_vector=analysis["has_vector"],
+                text_density_before=round(analysis["text_density_before"], 4),
+                text_density_after=round(density_after, 4),
+                ocr_applied=analysis["ocr_applied"],
+                confidence=_confidence_score(density_after, settings.confidence_density_target),
+                bypass_reason=analysis["bypass_reason"],
+            )
+        )
+    return metadata
+
+
+def _extract_text_density(pdf_path: Path, page_index: int, page_info: Any) -> float:
+    """Approximate page text density as visible characters per square inch."""
+    text = extract_text(str(pdf_path), page_numbers=[page_index]) or ""
+    visible_characters = sum(1 for char in text if not char.isspace())
+    area = max(float(page_info.width_inches) * float(page_info.height_inches), 1.0)
+    return visible_characters / area
+
+
+def _confidence_score(text_density_after: float, confidence_density_target: float) -> float:
+    """Convert post-normalization text density into a 0-1 confidence score."""
+    if confidence_density_target <= 0:
+        return 1.0
+    return round(min(text_density_after / confidence_density_target, 1.0), 3)
+
+
+def _serialize_pages(page_numbers: Iterable[int]) -> str:
+    """Convert 1-based page numbers into the OCRmyPDF pages selector."""
+    return ",".join(str(page_number) for page_number in page_numbers)
 
 
 # Prefect flow wrapper

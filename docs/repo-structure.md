@@ -169,7 +169,7 @@ knowledge-forge/
     ├── manifests/                   # intake manifests and checksum index
     │   └── checksum-index.yaml
     ├── raw/                         # original source PDFs
-    ├── normalized/                  # OCR-normalized PDFs
+    ├── normalized/                  # OCR-normalized PDFs and per-doc metadata JSON
     ├── parsed/                      # parser outputs per document
     │   └── {doc_id}/
     │       ├── content.md
