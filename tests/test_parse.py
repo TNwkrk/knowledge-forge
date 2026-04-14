@@ -230,7 +230,7 @@ def test_parse_quality_cli_reports_metric_breakdown(monkeypatch, tmp_path: Path)
     )
     monkeypatch.setattr("knowledge_forge.cli.score_parse", lambda *args, **kwargs: report)
 
-    result = runner.invoke(cli, ["parse", "quality", doc_id], env=env)
+    result = runner.invoke(cli, ["parse", "--quality", doc_id], env=env)
 
     assert result.exit_code == 0
     assert f"Document: {doc_id}" in result.output

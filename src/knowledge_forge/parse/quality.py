@@ -170,15 +170,12 @@ class ParseArtifactBundle(BaseModel):
     meta: ParseMetadata
 
 
-def score_parse(
-    doc_id: str,
+def score_bundle(
+    bundle: ParseArtifactBundle,
     *,
-    data_dir: Path | None = None,
     config_path: Path | None = None,
-    write_report: bool = True,
 ) -> ParseQualityReport:
-    """Evaluate parse artifacts, persist `quality.json`, and return the report."""
-    bundle = load_parse_artifacts(doc_id, data_dir=data_dir)
+    """Score an already-loaded artifact bundle and return the quality report (no disk I/O)."""
     thresholds = load_parse_quality_thresholds(config_path=config_path)
     metrics = ParseQualityMetrics(
         heading_coverage=_score_heading_coverage(bundle.structure, bundle.headings),
@@ -197,8 +194,8 @@ def score_parse(
         ),
         2,
     )
-    report = ParseQualityReport(
-        doc_id=doc_id,
+    return ParseQualityReport(
+        doc_id=bundle.doc_id,
         parser=bundle.meta.parser,
         parser_version=bundle.meta.parser_version,
         page_count=bundle.meta.page_count,
@@ -208,6 +205,18 @@ def score_parse(
         thresholds=thresholds,
         passes_threshold=overall_score >= thresholds.minimum_quality_score,
     )
+
+
+def score_parse(
+    doc_id: str,
+    *,
+    data_dir: Path | None = None,
+    config_path: Path | None = None,
+    write_report: bool = True,
+) -> ParseQualityReport:
+    """Load parse artifacts from disk, score them, optionally persist `quality.json`, and return the report."""
+    bundle = load_parse_artifacts(doc_id, data_dir=data_dir)
+    report = score_bundle(bundle, config_path=config_path)
     if write_report:
         output_path = get_data_dir(data_dir) / "parsed" / doc_id / "quality.json"
         output_path.write_text(report.model_dump_json(indent=2), encoding="utf-8")
@@ -269,11 +278,15 @@ def _score_table_extraction_rate(tables: TablesArtifact, page_map: PageMapArtifa
     if not tables.tables:
         return 100.0
 
-    mapped_refs = {item.item_ref for item in page_map.items if item.item_type == "table"}
+    mapped_refs = {item.item_ref for item in page_map.items if item.item_type == "table" and item.item_ref is not None}
     valid_tables = sum(
         1
         for table in tables.tables
-        if table.row_count > 0 and table.column_count > 0 and table.page_numbers and table.item_ref in mapped_refs
+        if table.row_count > 0
+        and table.column_count > 0
+        and table.page_numbers
+        and table.item_ref is not None
+        and table.item_ref in mapped_refs
     )
     return round((valid_tables / len(tables.tables)) * 100, 2)
 

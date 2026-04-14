@@ -223,17 +223,18 @@ def normalize(args: tuple[str, ...], normalize_all: bool) -> None:
     click.echo(f"Output: {result.output_path}")
 
 
-@cli.command("parse", context_settings={"ignore_unknown_options": True})
+@cli.command("parse")
 @click.argument("args", nargs=-1, type=str)
 @click.option("--all", "parse_all", is_flag=True, help="Parse every normalized document.")
-def parse(args: tuple[str, ...], parse_all: bool) -> None:
+@click.option("--quality", "show_quality", is_flag=True, help="Show parse quality for a parsed document.")
+def parse(args: tuple[str, ...], parse_all: bool, show_quality: bool) -> None:
     """Parse one or more normalized documents with Docling."""
-    if args[:1] == ("quality",):
+    if show_quality:
         if parse_all:
-            raise click.ClickException("parse quality does not support --all")
-        if len(args) != 2:
-            raise click.ClickException("pass a doc_id to parse quality")
-        _parse_quality(args[1])
+            raise click.ClickException("parse --quality does not support --all")
+        if len(args) != 1:
+            raise click.ClickException("pass a doc_id to parse --quality")
+        _parse_quality(args[0])
         return
 
     doc_id = args[0] if args else None
@@ -297,9 +298,9 @@ def _normalize_inspect(doc_id: str) -> None:
 
 
 def _parse_quality(doc_id: str) -> None:
-    """Inspect persisted parse quality metrics for a document."""
+    """Display parse quality metrics for a document without rewriting the persisted report."""
     try:
-        report = score_parse(doc_id, data_dir=get_data_dir())
+        report = score_parse(doc_id, data_dir=get_data_dir(), write_report=False)
     except FileNotFoundError as exc:
         raise click.ClickException(str(exc)) from exc
 

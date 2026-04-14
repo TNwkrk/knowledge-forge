@@ -17,6 +17,7 @@ from knowledge_forge.parse.quality import (
     HeadingTreeArtifact,
     PageMapArtifact,
     PageMapItem,
+    ParseArtifactBundle,
     ParseMetadata,
     ParsePageArtifact,
     ParseQualityReport,
@@ -24,7 +25,7 @@ from knowledge_forge.parse.quality import (
     ParseTextArtifact,
     StructuredParseArtifact,
     TablesArtifact,
-    score_parse,
+    score_bundle,
 )
 
 
@@ -118,8 +119,18 @@ def parse_document(doc_id: str, *, data_dir: Path | None = None) -> ParseResult:
     )
     _write_json(meta_path, metadata.model_dump(mode="json"))
 
+    bundle = ParseArtifactBundle(
+        doc_id=doc_id,
+        content=content,
+        structure=structure,
+        headings=headings,
+        tables=tables,
+        page_map=page_map,
+        meta=metadata,
+    )
+    quality_report = score_bundle(bundle)
+    quality_path.write_text(quality_report.model_dump_json(indent=2), encoding="utf-8")
     _persist_manifest_status(manifest, resolved_data_dir)
-    quality_report = score_parse(doc_id, data_dir=resolved_data_dir)
     return ParseResult(
         doc_id=doc_id,
         content_path=content_path,
