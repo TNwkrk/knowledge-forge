@@ -53,11 +53,7 @@ def normalize_document(doc_id: str, *, data_dir: Path | None = None) -> Normaliz
     input_checksum = compute_sha256(raw_path)
 
     existing = _load_normalization_meta(meta_path)
-    if (
-        existing is not None
-        and existing.input_checksum == input_checksum
-        and output_path.exists()
-    ):
+    if existing is not None and existing.input_checksum == input_checksum and output_path.exists():
         _persist_manifest_status(manifest, resolved_data_dir)
         return existing
 
