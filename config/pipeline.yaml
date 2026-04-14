@@ -17,6 +17,10 @@ stages:
   normalize:
     enabled: true
     output_dir: normalized
+    language: eng
+    deskew: true
+    clean: true
+    optimize: 1
 
   parse:
     enabled: true
