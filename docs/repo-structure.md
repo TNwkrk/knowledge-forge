@@ -177,7 +177,8 @@ knowledge-forge/
     │       ├── headings.json
     │       ├── tables.json
     │       ├── page_map.json
-    │       └── meta.json
+    │       ├── meta.json
+    │       └── quality.json
     ├── sections/                    # canonical sections
     │   └── {doc_id}/
     │       └── {section_id}.json
@@ -242,13 +243,26 @@ needs them and the expected output shape is stable enough to review.
 ```
 raw/{filename}.pdf
   → normalized/{doc_id}.pdf
-    → parsed/{doc_id}/content.md + structure.json + ...
+    → parsed/{doc_id}/content.md + structure.json + ... + quality.json
       → sections/{doc_id}/{section_id}.json
         → extracted/{doc_id}/{record_type}/{record_id}.json
           → compiled/{page_type}/{slug}.md
             → publish/{publish_run_id}/{path}.md
               → PR into FlowCommander
 ```
+
+### Canonical parse artifact contract
+
+`data/parsed/{doc_id}/structure.json` is the parser-neutral contract for later stages.
+It carries:
+- `doc_id`, `parser`, `parser_version`, `page_count`
+- normalized `texts` entries with `item_ref`, `label`, `text`, and `page_numbers`
+- normalized `tables` entries with `item_ref`, `label`, `page_numbers`, `row_count`, `column_count`, and `data`
+- normalized `pages` entries with `page_number`, dimensions, and source reference
+
+`quality.json` stores the parser quality report with:
+- per-metric scores for heading coverage, table extraction, text completeness, structure depth, and page coverage
+- overall score and the configured acceptance threshold
 
 ### Idempotency
 

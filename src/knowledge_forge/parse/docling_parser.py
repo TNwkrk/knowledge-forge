@@ -13,6 +13,19 @@ from pydantic import BaseModel, ConfigDict
 
 from knowledge_forge.intake.importer import get_data_dir, list_manifests, load_manifest
 from knowledge_forge.intake.manifest import DocumentStatus, ManifestEntry, compute_sha256
+from knowledge_forge.parse.quality import (
+    HeadingTreeArtifact,
+    PageMapArtifact,
+    PageMapItem,
+    ParseMetadata,
+    ParsePageArtifact,
+    ParseQualityReport,
+    ParseTableArtifact,
+    ParseTextArtifact,
+    StructuredParseArtifact,
+    TablesArtifact,
+    score_parse,
+)
 
 
 class ParseResult(BaseModel):
@@ -27,9 +40,11 @@ class ParseResult(BaseModel):
     tables_path: Path
     page_map_path: Path
     meta_path: Path
+    quality_path: Path
     parser_version: str
     page_count: int
     processing_time: float
+    quality_report: ParseQualityReport
 
 
 _HEADING_LEVELS: dict[str, int] = {
@@ -59,13 +74,19 @@ def parse_document(doc_id: str, *, data_dir: Path | None = None) -> ParseResult:
         raise RuntimeError(f"Docling conversion failed for '{doc_id}' with status '{status_value}'")
 
     document = conversion.document
-    structure = document.export_to_dict()
+    raw_structure = document.export_to_dict()
     content = document.export_to_markdown()
-    headings = _build_heading_tree(structure)
-    tables = structure.get("tables", [])
-    page_map = _build_page_map(structure)
     parser_version = _get_docling_version()
-    page_count = _derive_page_count(structure, conversion)
+    page_count = _derive_page_count(raw_structure, conversion)
+    structure = _build_structure_artifact(
+        doc_id=doc_id,
+        raw_structure=raw_structure,
+        parser_version=parser_version,
+        page_count=page_count,
+    )
+    headings = HeadingTreeArtifact(doc_id=doc_id, headings=_build_heading_tree(structure))
+    tables = TablesArtifact(doc_id=doc_id, tables=structure.tables)
+    page_map = PageMapArtifact(doc_id=doc_id, items=_build_page_map(structure))
 
     content_path = output_dir / "content.md"
     structure_path = output_dir / "structure.json"
@@ -73,32 +94,32 @@ def parse_document(doc_id: str, *, data_dir: Path | None = None) -> ParseResult:
     tables_path = output_dir / "tables.json"
     page_map_path = output_dir / "page_map.json"
     meta_path = output_dir / "meta.json"
+    quality_path = output_dir / "quality.json"
 
     content_path.write_text(content, encoding="utf-8")
-    _write_json(structure_path, structure)
-    _write_json(headings_path, {"doc_id": doc_id, "headings": headings})
-    _write_json(tables_path, {"doc_id": doc_id, "tables": tables})
-    _write_json(page_map_path, {"doc_id": doc_id, "items": page_map})
-    _write_json(
-        meta_path,
-        {
-            "doc_id": doc_id,
-            "parser": "docling",
-            "parser_version": parser_version,
-            "processed_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-            "processing_time_seconds": round(processing_time, 4),
-            "page_count": page_count,
-            "status": status_value,
-            "input_path": str(normalized_path),
-            "input_checksum": compute_sha256(normalized_path),
-            "document_hash": _get_nested_value(conversion, "input", "document_hash"),
-            "timings": _to_serializable(getattr(conversion, "timings", None)),
-            "confidence": _to_serializable(getattr(conversion, "confidence", None)),
-            "errors": _to_serializable(getattr(conversion, "errors", [])),
-        },
+    _write_json(structure_path, structure.model_dump(mode="json"))
+    _write_json(headings_path, headings.model_dump(mode="json"))
+    _write_json(tables_path, tables.model_dump(mode="json"))
+    _write_json(page_map_path, page_map.model_dump(mode="json"))
+    metadata = ParseMetadata(
+        doc_id=doc_id,
+        parser="docling",
+        parser_version=parser_version,
+        processed_at=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        processing_time_seconds=round(processing_time, 4),
+        page_count=page_count,
+        status=status_value,
+        input_path=str(normalized_path),
+        input_checksum=compute_sha256(normalized_path),
+        document_hash=_get_nested_value(conversion, "input", "document_hash"),
+        timings=_to_serializable(getattr(conversion, "timings", None)),
+        confidence=_to_serializable(getattr(conversion, "confidence", None)),
+        errors=_to_serializable(getattr(conversion, "errors", [])),
     )
+    _write_json(meta_path, metadata.model_dump(mode="json"))
 
     _persist_manifest_status(manifest, resolved_data_dir)
+    quality_report = score_parse(doc_id, data_dir=resolved_data_dir)
     return ParseResult(
         doc_id=doc_id,
         content_path=content_path,
@@ -107,9 +128,11 @@ def parse_document(doc_id: str, *, data_dir: Path | None = None) -> ParseResult:
         tables_path=tables_path,
         page_map_path=page_map_path,
         meta_path=meta_path,
+        quality_path=quality_path,
         parser_version=parser_version,
         page_count=page_count,
         processing_time=round(processing_time, 4),
+        quality_report=quality_report,
     )
 
 
@@ -151,14 +174,54 @@ def _derive_page_count(structure: dict[str, Any], conversion: Any) -> int:
     return int(input_page_count) if input_page_count is not None else 0
 
 
-def _build_heading_tree(structure: dict[str, Any]) -> list[dict[str, Any]]:
+def _build_structure_artifact(
+    *,
+    doc_id: str,
+    raw_structure: dict[str, Any],
+    parser_version: str,
+    page_count: int,
+) -> StructuredParseArtifact:
+    """Normalize Docling output into the canonical parser-neutral schema."""
+    texts = [
+        ParseTextArtifact(
+            item_ref=item.get("self_ref"),
+            label=str(item.get("label", "")),
+            text=str(item.get("text", "")),
+            page_numbers=_page_numbers(item),
+        )
+        for item in raw_structure.get("texts", [])
+    ]
+    tables = [
+        ParseTableArtifact(
+            item_ref=item.get("self_ref"),
+            label=item.get("label"),
+            page_numbers=_page_numbers(item),
+            row_count=len(item.get("data", [])) if isinstance(item.get("data"), list) else 0,
+            column_count=max((len(row) for row in item.get("data", []) if isinstance(row, list)), default=0),
+            data=item.get("data", []) if isinstance(item.get("data"), list) else [],
+        )
+        for item in raw_structure.get("tables", [])
+    ]
+    pages = _build_pages(raw_structure)
+    return StructuredParseArtifact(
+        doc_id=doc_id,
+        parser="docling",
+        parser_version=parser_version,
+        page_count=page_count,
+        texts=texts,
+        tables=tables,
+        pages=pages,
+    )
+
+
+def _build_heading_tree(structure: StructuredParseArtifact) -> list[dict[str, Any]]:
     """Convert flat Docling text nodes into a nested heading tree."""
     headings: list[dict[str, Any]] = []
     stack: list[dict[str, Any]] = []
-    for text_item in structure.get("texts", []):
-        label = str(text_item.get("label", "")).casefold()
+    for text_item in structure.texts:
+        label = text_item.label.casefold()
         level = _HEADING_LEVELS.get(label)
-        title = str(text_item.get("text", "")).strip()
+        title = text_item.text.strip()
         if level is None or not title:
             continue
 
@@ -167,7 +230,7 @@ def _build_heading_tree(structure: dict[str, Any]) -> list[dict[str, Any]]:
             "label": label,
             "level": level,
             "page_number": _first_page_number(text_item),
-            "item_ref": text_item.get("self_ref"),
+            "item_ref": text_item.item_ref,
             "children": [],
         }
         while stack and stack[-1]["level"] >= level:
@@ -180,32 +243,68 @@ def _build_heading_tree(structure: dict[str, Any]) -> list[dict[str, Any]]:
     return headings
 
 
-def _build_page_map(structure: dict[str, Any]) -> list[dict[str, Any]]:
+def _build_page_map(structure: StructuredParseArtifact) -> list[PageMapItem]:
     """Create a content-to-page map from text and table provenance."""
-    items: list[dict[str, Any]] = []
-    for collection_name, item_type in (("texts", "text"), ("tables", "table")):
-        for item in structure.get(collection_name, []):
-            page_numbers = _page_numbers(item)
-            if not page_numbers:
-                continue
-            entry: dict[str, Any] = {
-                "item_ref": item.get("self_ref"),
-                "item_type": item_type,
-                "label": item.get("label"),
-                "page_numbers": page_numbers,
-            }
-            if item_type == "text":
-                entry["text"] = item.get("text")
-            else:
-                entry["table_rows"] = len(item.get("data", [])) if isinstance(item.get("data"), list) else None
-            items.append(entry)
+    items: list[PageMapItem] = []
+    for item in structure.texts:
+        if not item.page_numbers:
+            continue
+        items.append(
+            PageMapItem(
+                item_ref=item.item_ref,
+                item_type="text",
+                label=item.label,
+                page_numbers=item.page_numbers,
+                text=item.text,
+            )
+        )
+    for item in structure.tables:
+        if not item.page_numbers:
+            continue
+        items.append(
+            PageMapItem(
+                item_ref=item.item_ref,
+                item_type="table",
+                label=item.label,
+                page_numbers=item.page_numbers,
+                table_rows=item.row_count,
+            )
+        )
     return items
 
 
-def _first_page_number(item: dict[str, Any]) -> int | None:
+def _build_pages(raw_structure: dict[str, Any]) -> list[ParsePageArtifact]:
+    """Extract a stable page list from raw Docling output."""
+    pages = raw_structure.get("pages", {})
+    if isinstance(pages, dict):
+        items = pages.values()
+    elif isinstance(pages, list):
+        items = pages
+    else:
+        items = []
+
+    normalized_pages: list[ParsePageArtifact] = []
+    for page in items:
+        if not isinstance(page, dict):
+            continue
+        size = page.get("size", {}) if isinstance(page.get("size"), dict) else {}
+        page_number = page.get("page_no")
+        if not isinstance(page_number, int):
+            continue
+        normalized_pages.append(
+            ParsePageArtifact(
+                page_number=page_number,
+                width=float(size["width"]) if "width" in size else None,
+                height=float(size["height"]) if "height" in size else None,
+                source_ref=page.get("self_ref"),
+            )
+        )
+    return normalized_pages
+
+
+def _first_page_number(item: ParseTextArtifact) -> int | None:
     """Extract the first page number from a Docling item provenance list."""
-    page_numbers = _page_numbers(item)
-    return page_numbers[0] if page_numbers else None
+    return item.page_numbers[0] if item.page_numbers else None
 
 
 def _page_numbers(item: dict[str, Any]) -> list[int]:
