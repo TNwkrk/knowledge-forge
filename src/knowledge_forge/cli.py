@@ -15,7 +15,7 @@ from knowledge_forge.intake.importer import (
     load_manifest,
     register_document,
 )
-from knowledge_forge.normalize import normalize_document
+from knowledge_forge.normalize import inspect_normalization, normalize_document
 
 
 @click.group(help="Knowledge Forge command line interface.")
@@ -182,12 +182,21 @@ def intake_bucket(doc_id: str | None, bucket_all: bool) -> None:
     click.echo(f"Manifest: {result.manifest_path}")
 
 
-@cli.command("normalize")
-@click.argument("doc_id", required=False, type=str)
+@cli.command("normalize", context_settings={"ignore_unknown_options": True})
+@click.argument("args", nargs=-1, type=str)
 @click.option("--all", "normalize_all", is_flag=True, help="Normalize every registered manifest.")
-def normalize(doc_id: str | None, normalize_all: bool) -> None:
-    """Run OCR normalization for one or more documents."""
-    if normalize_all and doc_id is not None:
+def normalize(args: tuple[str, ...], normalize_all: bool) -> None:
+    """Run OCR normalization for one or more documents, or inspect prior results."""
+    if args[:1] == ("inspect",):
+        if normalize_all:
+            raise click.ClickException("normalize inspect does not support --all")
+        if len(args) != 2:
+            raise click.ClickException("pass a doc_id to normalize inspect")
+        _normalize_inspect(args[1])
+        return
+
+    doc_id = args[0] if args else None
+    if normalize_all and len(args) > 0:
         raise click.ClickException("pass either a doc_id or --all, not both")
     if not normalize_all and doc_id is None:
         raise click.ClickException("pass a doc_id or use --all")
@@ -211,6 +220,33 @@ def normalize(doc_id: str | None, normalize_all: bool) -> None:
 
     click.echo(f"Normalized {doc_id}")
     click.echo(f"Output: {result.output_path}")
+
+
+def _normalize_inspect(doc_id: str) -> None:
+    """Inspect persisted per-page OCR metadata for a document."""
+    try:
+        result = inspect_normalization(doc_id, data_dir=get_data_dir())
+    except FileNotFoundError as exc:
+        raise click.ClickException(str(exc)) from exc
+
+    click.echo(f"Document: {doc_id}")
+    click.echo(f"Output: {result.output_path}")
+    click.echo("PAGE\tOCR\tTEXT_BEFORE\tVECTOR\tDENSITY_BEFORE\tDENSITY_AFTER\tCONFIDENCE\tBYPASS_REASON")
+    for page in result.page_metadata:
+        click.echo(
+            "\t".join(
+                [
+                    str(page.page_number),
+                    "yes" if page.ocr_applied else "no",
+                    "yes" if page.has_text_before else "no",
+                    "yes" if page.has_vector else "no",
+                    f"{page.text_density_before:.4f}",
+                    f"{page.text_density_after:.4f}",
+                    f"{page.confidence:.3f}",
+                    page.bypass_reason or "-",
+                ]
+            )
+        )
 
 
 def _prompt_models() -> list[str]:

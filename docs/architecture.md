@@ -60,7 +60,8 @@ Buckets are the unit of contradiction analysis. Only records within the same buc
 Scanned or inconsistent PDFs are normalized before parsing:
 
 - OCRmyPDF adds a text layer to scanned pages
-- Metadata (page count, OCR confidence, skew correction) is recorded
+- Per-page text-density analysis decides which pages actually need OCR
+- Metadata (page count, per-page OCR confidence, skew correction, bypass reasons) is recorded
 - Normalized PDFs are saved to `data/normalized/`
 - Already-digital PDFs may skip OCR but still get a normalization record
 
