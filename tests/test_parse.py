@@ -15,6 +15,7 @@ from knowledge_forge.cli import cli
 from knowledge_forge.intake.importer import RegistrationRequest, load_manifest, register_document
 from knowledge_forge.intake.manifest import DocumentStatus
 from knowledge_forge.parse.docling_parser import parse_document
+from knowledge_forge.parse.quality import score_parse
 
 
 def _write_pdf(path: Path, text: bytes = b"BT\n/F1 12 Tf\n10 20 Td\n(Knowledge Forge parse) Tj\nET") -> Path:
@@ -116,7 +117,10 @@ def test_parse_document_writes_artifacts_and_updates_manifest(monkeypatch, tmp_p
             "2": {"page_no": 2, "size": {"width": 612, "height": 792}},
         },
     }
-    fake_document = _FakeDoclingDocument(structure=structure, markdown="# DC1000 Service Manual\n\n## Safety")
+    fake_document = _FakeDoclingDocument(
+        structure=structure,
+        markdown="# DC1000 Service Manual\n\n## Safety\n\nWear gloves.\n\n## Specifications",
+    )
     fake_result = SimpleNamespace(
         status="success",
         document=fake_document,
@@ -138,7 +142,13 @@ def test_parse_document_writes_artifacts_and_updates_manifest(monkeypatch, tmp_p
     assert result.tables_path.exists()
     assert result.page_map_path.exists()
     assert result.meta_path.exists()
+    assert result.quality_path.exists()
     assert "# DC1000 Service Manual" in result.content_path.read_text(encoding="utf-8")
+
+    parsed_structure = json.loads(result.structure_path.read_text(encoding="utf-8"))
+    assert parsed_structure["doc_id"] == doc_id
+    assert parsed_structure["parser"] == "docling"
+    assert parsed_structure["texts"][0]["text"] == "DC1000 Service Manual"
 
     headings = json.loads(result.headings_path.read_text(encoding="utf-8"))
     assert headings["headings"][0]["title"] == "DC1000 Service Manual"
@@ -157,6 +167,9 @@ def test_parse_document_writes_artifacts_and_updates_manifest(monkeypatch, tmp_p
     assert meta["parser_version"] == "test-docling"
     assert meta["page_count"] == 2
     assert meta["document_hash"] == "abc123"
+    quality = json.loads(result.quality_path.read_text(encoding="utf-8"))
+    assert quality["overall_score"] >= 70.0
+    assert quality["passes_threshold"] is True
 
     manifest = load_manifest(data_dir, doc_id)
     assert manifest.document.status == DocumentStatus.PARSED
@@ -180,7 +193,10 @@ def test_parse_cli_supports_doc_id_and_all(monkeypatch, tmp_path: Path) -> None:
     def fake_parse(doc_id: str, *, data_dir: Path | None = None) -> object:
         calls.append(doc_id)
         assert data_dir == Path(env["KNOWLEDGE_FORGE_DATA_DIR"])
-        return SimpleNamespace(content_path=data_dir / "parsed" / doc_id / "content.md")
+        return SimpleNamespace(
+            content_path=data_dir / "parsed" / doc_id / "content.md",
+            quality_report=SimpleNamespace(overall_score=91.5),
+        )
 
     monkeypatch.setattr("knowledge_forge.cli.parse_document", fake_parse)
 
@@ -193,6 +209,165 @@ def test_parse_cli_supports_doc_id_and_all(monkeypatch, tmp_path: Path) -> None:
     assert f"Parsed {first_doc_id}" in every.output
     assert f"Parsed {second_doc_id}" in every.output
     assert calls == [first_doc_id, first_doc_id, second_doc_id]
+
+
+def test_parse_quality_cli_reports_metric_breakdown(monkeypatch, tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    doc_id = _register_normalized_fixture(_write_pdf(tmp_path / "fixture.pdf"), data_dir)
+    runner = CliRunner()
+    env = {"KNOWLEDGE_FORGE_DATA_DIR": str(data_dir)}
+
+    report = SimpleNamespace(
+        overall_score=88.5,
+        passes_threshold=True,
+        metrics=SimpleNamespace(
+            heading_coverage=90.0,
+            table_extraction_rate=100.0,
+            text_completeness=85.0,
+            structure_depth=75.0,
+            page_coverage=92.0,
+        ),
+    )
+    monkeypatch.setattr("knowledge_forge.cli.score_parse", lambda *args, **kwargs: report)
+
+    result = runner.invoke(cli, ["parse", "--quality", doc_id], env=env)
+
+    assert result.exit_code == 0
+    assert f"Document: {doc_id}" in result.output
+    assert "Overall score: 88.50" in result.output
+    assert "heading_coverage\t90.00" in result.output
+
+
+def test_score_parse_uses_configured_threshold_and_writes_report(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    doc_id = "honeywell-dc1000-service-manual-rev-3"
+    output_dir = data_dir / "parsed" / doc_id
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    (output_dir / "content.md").write_text("# Title\n\nOnly partial content.", encoding="utf-8")
+    (output_dir / "structure.json").write_text(
+        json.dumps(
+            {
+                "doc_id": doc_id,
+                "parser": "docling",
+                "parser_version": "test-docling",
+                "page_count": 3,
+                "texts": [
+                    {"item_ref": "#/texts/0", "label": "title", "text": "Title", "page_numbers": [1]},
+                    {"item_ref": "#/texts/1", "label": "section_header", "text": "Safety", "page_numbers": [2]},
+                    {
+                        "item_ref": "#/texts/2",
+                        "label": "text",
+                        "text": "This is a much longer body paragraph that is only partially rendered.",
+                        "page_numbers": [2, 3],
+                    },
+                ],
+                "tables": [
+                    {
+                        "item_ref": "#/tables/0",
+                        "label": "table",
+                        "page_numbers": [3],
+                        "row_count": 0,
+                        "column_count": 0,
+                        "data": [],
+                    }
+                ],
+                "pages": [
+                    {"page_number": 1, "width": 612.0, "height": 792.0, "source_ref": "#/pages/1"},
+                    {"page_number": 2, "width": 612.0, "height": 792.0, "source_ref": "#/pages/2"},
+                    {"page_number": 3, "width": 612.0, "height": 792.0, "source_ref": "#/pages/3"},
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    (output_dir / "headings.json").write_text(
+        json.dumps(
+            {
+                "doc_id": doc_id,
+                "headings": [
+                    {
+                        "title": "Title",
+                        "label": "title",
+                        "level": 1,
+                        "page_number": 1,
+                        "item_ref": "#/texts/0",
+                        "children": [],
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    (output_dir / "tables.json").write_text(
+        json.dumps(
+            {
+                "doc_id": doc_id,
+                "tables": [
+                    {
+                        "item_ref": "#/tables/0",
+                        "label": "table",
+                        "page_numbers": [3],
+                        "row_count": 0,
+                        "column_count": 0,
+                        "data": [],
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    (output_dir / "page_map.json").write_text(
+        json.dumps(
+            {
+                "doc_id": doc_id,
+                "items": [
+                    {
+                        "item_ref": "#/texts/0",
+                        "item_type": "text",
+                        "label": "title",
+                        "page_numbers": [1],
+                        "text": "Title",
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    (output_dir / "meta.json").write_text(
+        json.dumps(
+            {
+                "doc_id": doc_id,
+                "parser": "docling",
+                "parser_version": "test-docling",
+                "processed_at": "2026-04-14T00:00:00Z",
+                "processing_time_seconds": 1.2,
+                "page_count": 3,
+                "status": "success",
+                "input_path": str(data_dir / "normalized" / f"{doc_id}.pdf"),
+                "input_checksum": "0" * 64,
+                "document_hash": "abc123",
+                "timings": {"total": 1.2},
+                "confidence": {"mean_score": 0.45},
+                "errors": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    config_path = tmp_path / "pipeline.yaml"
+    config_path.write_text(
+        "stages:\n  parse:\n    minimum_quality_score: 80\n",
+        encoding="utf-8",
+    )
+
+    report = score_parse(doc_id, data_dir=data_dir, config_path=config_path)
+
+    assert report.thresholds.minimum_quality_score == 80
+    assert report.overall_score < 80
+    assert report.passes_threshold is False
+    persisted = json.loads((output_dir / "quality.json").read_text(encoding="utf-8"))
+    assert persisted["overall_score"] == report.overall_score
+    assert persisted["passes_threshold"] is False
 
 
 def test_parse_package_imports_without_prefect(monkeypatch) -> None:

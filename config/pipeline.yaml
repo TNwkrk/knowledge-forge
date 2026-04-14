@@ -30,6 +30,7 @@ stages:
     enabled: true
     output_dir: parsed
     sections_dir: sections
+    minimum_quality_score: 70.0
 
   extract:
     enabled: true

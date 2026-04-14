@@ -16,7 +16,7 @@ from knowledge_forge.intake.importer import (
     register_document,
 )
 from knowledge_forge.normalize import inspect_normalization, normalize_document
-from knowledge_forge.parse import parse_document
+from knowledge_forge.parse import parse_document, score_parse
 
 
 @click.group(help="Knowledge Forge command line interface.")
@@ -223,11 +223,20 @@ def normalize(args: tuple[str, ...], normalize_all: bool) -> None:
     click.echo(f"Output: {result.output_path}")
 
 
-@cli.command("parse", context_settings={"ignore_unknown_options": True})
+@cli.command("parse")
 @click.argument("args", nargs=-1, type=str)
 @click.option("--all", "parse_all", is_flag=True, help="Parse every normalized document.")
-def parse(args: tuple[str, ...], parse_all: bool) -> None:
+@click.option("--quality", "show_quality", is_flag=True, help="Show parse quality for a parsed document.")
+def parse(args: tuple[str, ...], parse_all: bool, show_quality: bool) -> None:
     """Parse one or more normalized documents with Docling."""
+    if show_quality:
+        if parse_all:
+            raise click.ClickException("parse --quality does not support --all")
+        if len(args) != 1:
+            raise click.ClickException("pass a doc_id to parse --quality")
+        _parse_quality(args[0])
+        return
+
     doc_id = args[0] if args else None
     if parse_all and len(args) > 0:
         raise click.ClickException("pass either a doc_id or --all, not both")
@@ -246,7 +255,9 @@ def parse(args: tuple[str, ...], parse_all: bool) -> None:
 
         for manifest_doc_id in normalized_doc_ids:
             result = parse_document(manifest_doc_id, data_dir=data_dir)
-            click.echo(f"Parsed {manifest_doc_id} -> {result.content_path}")
+            click.echo(
+                f"Parsed {manifest_doc_id} -> {result.content_path} (quality {result.quality_report.overall_score:.2f})"
+            )
         return
 
     try:
@@ -256,6 +267,7 @@ def parse(args: tuple[str, ...], parse_all: bool) -> None:
 
     click.echo(f"Parsed {doc_id}")
     click.echo(f"Content: {result.content_path}")
+    click.echo(f"Quality score: {result.quality_report.overall_score:.2f}")
 
 
 def _normalize_inspect(doc_id: str) -> None:
@@ -283,6 +295,24 @@ def _normalize_inspect(doc_id: str) -> None:
                 ]
             )
         )
+
+
+def _parse_quality(doc_id: str) -> None:
+    """Display parse quality metrics for a document without rewriting the persisted report."""
+    try:
+        report = score_parse(doc_id, data_dir=get_data_dir(), write_report=False)
+    except FileNotFoundError as exc:
+        raise click.ClickException(str(exc)) from exc
+
+    click.echo(f"Document: {doc_id}")
+    click.echo(f"Overall score: {report.overall_score:.2f}")
+    click.echo(f"Passes threshold: {'yes' if report.passes_threshold else 'no'}")
+    click.echo("METRIC\tSCORE")
+    click.echo(f"heading_coverage\t{report.metrics.heading_coverage:.2f}")
+    click.echo(f"table_extraction_rate\t{report.metrics.table_extraction_rate:.2f}")
+    click.echo(f"text_completeness\t{report.metrics.text_completeness:.2f}")
+    click.echo(f"structure_depth\t{report.metrics.structure_depth:.2f}")
+    click.echo(f"page_coverage\t{report.metrics.page_coverage:.2f}")
 
 
 def _prompt_models() -> list[str]:
