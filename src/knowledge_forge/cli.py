@@ -16,6 +16,7 @@ from knowledge_forge.intake.importer import (
     register_document,
 )
 from knowledge_forge.normalize import inspect_normalization, normalize_document
+from knowledge_forge.parse import parse_document
 
 
 @click.group(help="Knowledge Forge command line interface.")
@@ -220,6 +221,41 @@ def normalize(args: tuple[str, ...], normalize_all: bool) -> None:
 
     click.echo(f"Normalized {doc_id}")
     click.echo(f"Output: {result.output_path}")
+
+
+@cli.command("parse", context_settings={"ignore_unknown_options": True})
+@click.argument("args", nargs=-1, type=str)
+@click.option("--all", "parse_all", is_flag=True, help="Parse every normalized document.")
+def parse(args: tuple[str, ...], parse_all: bool) -> None:
+    """Parse one or more normalized documents with Docling."""
+    doc_id = args[0] if args else None
+    if parse_all and len(args) > 0:
+        raise click.ClickException("pass either a doc_id or --all, not both")
+    if not parse_all and doc_id is None:
+        raise click.ClickException("pass a doc_id or use --all")
+
+    data_dir = get_data_dir()
+    if parse_all:
+        manifests = list_manifests(data_dir)
+        normalized_doc_ids = [
+            manifest.doc_id for manifest in manifests if (data_dir / "normalized" / f"{manifest.doc_id}.pdf").exists()
+        ]
+        if not normalized_doc_ids:
+            click.echo("No normalized manifests found.")
+            return
+
+        for manifest_doc_id in normalized_doc_ids:
+            result = parse_document(manifest_doc_id, data_dir=data_dir)
+            click.echo(f"Parsed {manifest_doc_id} -> {result.content_path}")
+        return
+
+    try:
+        result = parse_document(doc_id, data_dir=data_dir)
+    except (FileNotFoundError, RuntimeError) as exc:
+        raise click.ClickException(str(exc)) from exc
+
+    click.echo(f"Parsed {doc_id}")
+    click.echo(f"Content: {result.content_path}")
 
 
 def _normalize_inspect(doc_id: str) -> None:
