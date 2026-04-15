@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import time
+from collections.abc import Iterator
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -251,8 +252,10 @@ def poll_batch(
 ) -> BatchStatus:
     """Poll a batch until it reaches a terminal state or the timeout expires."""
     client = sdk_client or OpenAI(api_key=config.api_key.get_secret_value())
-    interval = poll_interval_seconds or config.batch.poll_interval_seconds
-    max_duration = max_poll_duration_seconds or config.batch.max_poll_duration_seconds
+    interval = poll_interval_seconds if poll_interval_seconds is not None else config.batch.poll_interval_seconds
+    max_duration = (
+        max_poll_duration_seconds if max_poll_duration_seconds is not None else config.batch.max_poll_duration_seconds
+    )
     started = monotonic_fn()
 
     while True:
@@ -320,6 +323,7 @@ def ingest_results(
                 failure = _classify_failure(
                     custom_id=custom_id,
                     message=str(exc),
+                    status_code=response.get("status_code") if isinstance(response.get("status_code"), int) else None,
                     request_id=_extract_request_id(response_body),
                 )
                 failures.append(failure)
@@ -372,18 +376,41 @@ def _normalize_batch_status(batch: Any) -> BatchStatus:
     )
 
 
-def _download_file_content(client: Any, file_id: str) -> str:
-    if hasattr(client.files, "retrieve_content"):
-        return str(client.files.retrieve_content(file_id))
-    content = client.files.content(file_id)
+def _coerce_file_content_text(content: Any) -> str:
+    if isinstance(content, str):
+        return content
+    if isinstance(content, bytes):
+        return content.decode("utf-8")
+
     text = getattr(content, "text", None)
+    if isinstance(text, str):
+        return text
     if callable(text):
-        return str(text())
+        text_value = text()
+        if isinstance(text_value, str):
+            return text_value
+        if isinstance(text_value, bytes):
+            return text_value.decode("utf-8")
+
+    read = getattr(content, "read", None)
+    if callable(read):
+        read_value = read()
+        if isinstance(read_value, str):
+            return read_value
+        if isinstance(read_value, bytes):
+            return read_value.decode("utf-8")
+
     return str(content)
 
 
-def _iter_jsonl(payload: str) -> list[dict[str, Any]]:
-    entries: list[dict[str, Any]] = []
+def _download_file_content(client: Any, file_id: str) -> str:
+    if hasattr(client.files, "retrieve_content"):
+        return _coerce_file_content_text(client.files.retrieve_content(file_id))
+    content = client.files.content(file_id)
+    return _coerce_file_content_text(content)
+
+
+def _iter_jsonl(payload: str) -> Iterator[dict[str, Any]]:
     for raw_line in payload.splitlines():
         line = raw_line.strip()
         if not line:
@@ -391,8 +418,7 @@ def _iter_jsonl(payload: str) -> list[dict[str, Any]]:
         parsed = json.loads(line)
         if not isinstance(parsed, dict):
             raise ValueError("batch output file contained a non-object JSONL line")
-        entries.append(parsed)
-    return entries
+        yield parsed
 
 
 def _parse_success_payload(

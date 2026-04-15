@@ -636,6 +636,37 @@ def test_poll_batch_returns_failed_terminal_status() -> None:
     assert status.error_file_id == "file-err-999"
 
 
+def test_poll_batch_allows_zero_timeout_override() -> None:
+    sdk_client = SimpleNamespace(
+        batches=SimpleNamespace(
+            retrieve=lambda _batch_id: SimpleNamespace(
+                id="batch-zero",
+                status="in_progress",
+                created_at=1_765_698_600,
+                request_counts=SimpleNamespace(total=1),
+                output_file_id=None,
+                error_file_id=None,
+                completed_at=None,
+                failed_at=None,
+            )
+        )
+    )
+    sleeps: list[int] = []
+
+    with pytest.raises(TimeoutError):
+        poll_batch(
+            "batch-zero",
+            _build_config(),
+            sdk_client=sdk_client,
+            poll_interval_seconds=0,
+            max_poll_duration_seconds=0,
+            sleep_fn=sleeps.append,
+            monotonic_fn=iter([0.0, 0.0]).__next__,
+        )
+
+    assert sleeps == []
+
+
 def test_ingest_results_parses_successes_classifies_failures_and_logs(tmp_path: Path) -> None:
     output_lines = "\n".join(
         [
@@ -739,6 +770,88 @@ def test_ingest_results_parses_successes_classifies_failures_and_logs(tmp_path: 
     assert len(log_entries) == 4
     assert sum(1 for entry in log_entries if entry.status == "success") == 1
     assert sum(1 for entry in log_entries if entry.status == "error") == 3
+
+
+def test_ingest_results_classifies_http_status_failures_from_output(tmp_path: Path) -> None:
+    output_lines = json.dumps(
+        {
+            "custom_id": "req-server-error",
+            "response": {
+                "status_code": 503,
+                "body": {
+                    "id": "resp-server-error",
+                    "error": {"message": "Upstream service unavailable"},
+                },
+            },
+        }
+    )
+    sdk_client = SimpleNamespace(
+        batches=SimpleNamespace(
+            retrieve=lambda _batch_id: SimpleNamespace(
+                id="batch-503",
+                status="completed",
+                created_at=1_765_698_600,
+                request_counts=SimpleNamespace(total=1),
+                output_file_id="file-out-503",
+                error_file_id=None,
+                completed_at=1_765_698_900,
+                failed_at=None,
+            )
+        ),
+        files=SimpleNamespace(retrieve_content=lambda _file_id: output_lines),
+    )
+
+    results = ingest_results("batch-503", _build_config(), sdk_client=sdk_client, data_dir=tmp_path)
+
+    assert results.stats.total == 1
+    assert results.stats.succeeded == 0
+    assert results.stats.failed == 1
+    failure = results.failed[0]
+    assert failure.custom_id == "req-server-error"
+    assert failure.error_type == "server_error"
+    assert failure.retriable is True
+    assert failure.status_code == 503
+    assert results.retry_custom_ids == ["req-server-error"]
+
+
+def test_ingest_results_decodes_bytes_batch_file_content(tmp_path: Path) -> None:
+    output_lines = json.dumps(
+        {
+            "custom_id": "req-bytes",
+            "response": {
+                "status_code": 200,
+                "body": {
+                    "id": "resp-bytes",
+                    "model": "gpt-4o",
+                    "output_text": json.dumps({"title": "From bytes"}),
+                    "usage": {"input_tokens": 3, "output_tokens": 2},
+                },
+            },
+        }
+    ).encode("utf-8")
+    sdk_client = SimpleNamespace(
+        batches=SimpleNamespace(
+            retrieve=lambda _batch_id: SimpleNamespace(
+                id="batch-bytes",
+                status="completed",
+                created_at=1_765_698_600,
+                request_counts=SimpleNamespace(total=1),
+                output_file_id="file-out-bytes",
+                error_file_id=None,
+                completed_at=1_765_698_900,
+                failed_at=None,
+            )
+        ),
+        files=SimpleNamespace(retrieve_content=lambda _file_id: output_lines),
+    )
+
+    results = ingest_results("batch-bytes", _build_config(), sdk_client=sdk_client, data_dir=tmp_path)
+
+    assert results.stats.total == 1
+    assert results.stats.succeeded == 1
+    assert results.stats.failed == 0
+    assert results.successful[0].custom_id == "req-bytes"
+    assert results.successful[0].parsed_json == {"title": "From bytes"}
 
 
 def test_inference_batch_status_cli_reports_terminal_status(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
