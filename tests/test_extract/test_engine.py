@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
 from click.testing import CliRunner
 
 from knowledge_forge.cli import cli
@@ -63,10 +64,15 @@ def _base_record() -> dict[str, object]:
     }
 
 
+class _FakeConfig:
+    extraction_model: str = "gpt-4o-mini"
+
+
 class _FakeClient:
     def __init__(self, responses: dict[str, list[dict[str, object]]]) -> None:
         self.responses = responses
         self.calls: list[dict[str, object]] = []
+        self.config = _FakeConfig()
 
     def complete(
         self,
@@ -231,6 +237,22 @@ def test_load_prompt_template_reads_yaml_template() -> None:
     assert "Return only JSON" in template.system
     assert template.schema_ref == "procedure"
     assert "{section_content}" in template.user
+
+
+def test_load_prompt_template_raises_for_non_mapping_yaml(tmp_path: Path) -> None:
+    bad = tmp_path / "bad_type.yaml"
+    bad.write_text("- item1\n- item2\n", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="not a YAML mapping"):
+        load_prompt_template("bad_type", base_dir=tmp_path)
+
+
+def test_load_prompt_template_raises_for_missing_required_keys(tmp_path: Path) -> None:
+    partial = tmp_path / "partial.yaml"
+    partial.write_text("system: hello\n", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="missing required keys"):
+        load_prompt_template("partial", base_dir=tmp_path)
 
 
 def test_extract_cli_supports_document_and_single_section(monkeypatch, tmp_path: Path) -> None:

@@ -92,8 +92,7 @@ def extract_section(
         template = load_prompt_template(record_type)
         if template.schema_ref != record_type:
             raise ValueError(
-                "prompt template schema_ref mismatch for "
-                f"record_type '{record_type}': got '{template.schema_ref}'"
+                f"prompt template schema_ref mismatch for record_type '{record_type}': got '{template.schema_ref}'"
             )
         schema = _record_list_schema(record_type)
         prompt = render_prompt(template, section=section, record_type=record_type)
@@ -138,7 +137,13 @@ def load_prompt_template(record_type: str, *, base_dir: Path | None = None) -> P
     if not template_path.exists():
         raise FileNotFoundError(f"prompt template not found for record type '{record_type}'")
 
-    payload = safe_load(template_path.read_text(encoding="utf-8")) or {}
+    payload = safe_load(template_path.read_text(encoding="utf-8"))
+    if not isinstance(payload, dict):
+        raise ValueError(f"prompt template is not a YAML mapping: {template_path}")
+    required_keys = {"system", "user", "schema_ref"}
+    missing = required_keys - payload.keys()
+    if missing:
+        raise ValueError(f"prompt template missing required keys {sorted(missing)}: {template_path}")
     return PromptTemplate(
         system=str(payload["system"]),
         user=str(payload["user"]),
