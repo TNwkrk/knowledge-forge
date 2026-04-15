@@ -3,12 +3,22 @@
 from __future__ import annotations
 
 import json
+from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from click.testing import CliRunner
 
-from knowledge_forge.inference import InferenceClient, InferenceConfig
+from knowledge_forge.cli import cli
+from knowledge_forge.inference import (
+    InferenceClient,
+    InferenceConfig,
+    InferenceLogEntry,
+    InferenceLogger,
+    aggregate_costs,
+    estimate_cost,
+)
 
 
 def test_inference_config_loads_yaml_with_env_overrides(tmp_path: Path) -> None:
@@ -29,6 +39,13 @@ openai:
     max_batch_size: 200
     poll_interval_seconds: 15
     max_poll_duration_seconds: 120
+  pricing:
+    gpt-4o-mini:
+      input_per_million_tokens: 0.15
+      output_per_million_tokens: 0.60
+    gpt-4.1-mini:
+      input_per_million_tokens: 0.40
+      output_per_million_tokens: 1.60
 """.strip(),
         encoding="utf-8",
     )
@@ -105,6 +122,12 @@ def test_inference_client_initializes_sdk_with_secret_api_key(monkeypatch: pytes
                 "poll_interval_seconds": 60,
                 "max_poll_duration_seconds": 86400,
             },
+            "pricing": {
+                "gpt-4o": {
+                    "input_per_million_tokens": 2.5,
+                    "output_per_million_tokens": 10.0,
+                }
+            },
             "api_key": "sdk-secret",
         }
     )
@@ -117,7 +140,7 @@ def test_inference_client_initializes_sdk_with_secret_api_key(monkeypatch: pytes
     assert client.config is config
 
 
-def test_inference_client_completes_direct_request() -> None:
+def test_inference_client_completes_direct_request(tmp_path: Path) -> None:
     response = SimpleNamespace(
         id="resp_123",
         model="gpt-4o",
@@ -128,10 +151,15 @@ def test_inference_client_completes_direct_request() -> None:
         responses=SimpleNamespace(create=lambda **_: response),
     )
     config = _build_config()
+    logger = InferenceLogger(tmp_path / "logs")
 
-    result = InferenceClient(config, sdk_client=sdk_client).complete(
+    result = InferenceClient(config, sdk_client=sdk_client, logger=logger).complete(
         prompt="What is Knowledge Forge?",
         system="Answer clearly.",
+        prompt_template="tests/direct",
+        source_doc_id="doc-001",
+        source_section_id="sec-001",
+        pipeline_run_id="run-001",
     )
 
     assert result.response_text == "A direct answer"
@@ -140,9 +168,18 @@ def test_inference_client_completes_direct_request() -> None:
     assert result.input_tokens == 12
     assert result.output_tokens == 4
     assert result.request_id == "resp_123"
+    log_entries = list((tmp_path / "logs").rglob("*.json"))
+    assert len(log_entries) == 1
+    payload = json.loads(log_entries[0].read_text(encoding="utf-8"))
+    assert payload["status"] == "success"
+    assert payload["prompt_template"] == "tests/direct"
+    assert payload["source_doc_id"] == "doc-001"
+    assert payload["source_section_id"] == "sec-001"
+    assert payload["pipeline_run_id"] == "run-001"
+    assert payload["estimated_cost_usd"] == estimate_cost("gpt-4o", 12, 4, config.pricing)
 
 
-def test_inference_client_validates_schema_bound_response() -> None:
+def test_inference_client_validates_schema_bound_response(tmp_path: Path) -> None:
     schema = {
         "type": "object",
         "properties": {
@@ -168,8 +205,9 @@ def test_inference_client_validates_schema_bound_response() -> None:
 
     sdk_client = SimpleNamespace(responses=SimpleNamespace(create=fake_create))
     config = _build_config()
+    logger = InferenceLogger(tmp_path / "logs")
 
-    result = InferenceClient(config, sdk_client=sdk_client).complete(
+    result = InferenceClient(config, sdk_client=sdk_client, logger=logger).complete(
         prompt="Extract the startup procedure.",
         system="Return structured JSON.",
         schema=schema,
@@ -184,9 +222,11 @@ def test_inference_client_validates_schema_bound_response() -> None:
             "strict": True,
         }
     }
+    payload = json.loads(next((tmp_path / "logs").rglob("*.json")).read_text(encoding="utf-8"))
+    assert payload["schema_valid"] is True
 
 
-def test_inference_client_rejects_invalid_schema_response() -> None:
+def test_inference_client_rejects_invalid_schema_response(tmp_path: Path) -> None:
     schema = {
         "type": "object",
         "properties": {"title": {"type": "string"}},
@@ -194,33 +234,122 @@ def test_inference_client_rejects_invalid_schema_response() -> None:
         "additionalProperties": False,
     }
     response = SimpleNamespace(
+        id="resp_invalid",
         output_text=json.dumps({"steps": ["Missing title"]}),
         usage=SimpleNamespace(input_tokens=1, output_tokens=1),
     )
     sdk_client = SimpleNamespace(responses=SimpleNamespace(create=lambda **_: response))
+    logger = InferenceLogger(tmp_path / "logs")
 
     with pytest.raises(ValueError, match="response did not satisfy schema"):
-        InferenceClient(_build_config(), sdk_client=sdk_client).complete(
+        InferenceClient(_build_config(), sdk_client=sdk_client, logger=logger).complete(
             prompt="Extract a title.",
             system="Return JSON.",
             schema=schema,
         )
+    payload = json.loads(next((tmp_path / "logs").rglob("*.json")).read_text(encoding="utf-8"))
+    assert payload["status"] == "error"
+    assert payload["schema_valid"] is False
 
 
-def test_inference_client_rejects_non_json_schema_response() -> None:
+def test_inference_client_rejects_non_json_schema_response(tmp_path: Path) -> None:
     schema = {"type": "object"}
     response = SimpleNamespace(
+        id="resp_not_json",
         output_text="not json at all",
         usage=SimpleNamespace(input_tokens=1, output_tokens=1),
     )
     sdk_client = SimpleNamespace(responses=SimpleNamespace(create=lambda **_: response))
+    logger = InferenceLogger(tmp_path / "logs")
 
     with pytest.raises(ValueError, match="response was not valid JSON"):
-        InferenceClient(_build_config(), sdk_client=sdk_client).complete(
+        InferenceClient(_build_config(), sdk_client=sdk_client, logger=logger).complete(
             prompt="Return JSON.",
             system="Return JSON.",
             schema=schema,
         )
+    payload = json.loads(next((tmp_path / "logs").rglob("*.json")).read_text(encoding="utf-8"))
+    assert payload["request_id"] == "resp_not_json"
+    assert payload["estimated_cost_usd"] == estimate_cost("gpt-4o", 1, 1, _build_config().pricing)
+
+
+def test_aggregate_costs_rolls_up_logs(tmp_path: Path) -> None:
+    logger = InferenceLogger(tmp_path / "logs")
+    logger.log(
+        InferenceLogEntry(
+            request_id="req-1",
+            pipeline_run_id="run-1",
+            mode="direct",
+            model="gpt-4o",
+            prompt_template="tests/direct",
+            source_doc_id="doc-001",
+            source_section_id="sec-001",
+            input_tokens=100,
+            output_tokens=25,
+            estimated_cost_usd=0.0005,
+            latency_ms=100,
+            status="success",
+            schema_valid=True,
+            timestamp=datetime(2026, 4, 15, 12, 0, tzinfo=UTC),
+        )
+    )
+    logger.log(
+        InferenceLogEntry(
+            request_id="req-2",
+            pipeline_run_id="run-2",
+            mode="direct",
+            model="gpt-4o-mini",
+            prompt_template="tests/direct",
+            source_doc_id="doc-002",
+            source_section_id="sec-002",
+            input_tokens=200,
+            output_tokens=50,
+            estimated_cost_usd=0.00006,
+            latency_ms=90,
+            status="success",
+            schema_valid=None,
+            timestamp=datetime(2026, 4, 16, 9, 30, tzinfo=UTC),
+        )
+    )
+
+    report = aggregate_costs(tmp_path / "logs")
+
+    assert report.total.request_count == 2
+    assert report.total.input_tokens == 300
+    assert report.total.output_tokens == 75
+    assert report.by_model["gpt-4o"].request_count == 1
+    assert report.by_date["2026-04-15"].estimated_cost_usd == 0.0005
+    assert report.by_pipeline_run["run-2"].output_tokens == 50
+
+
+def test_inference_costs_cli_reports_aggregates(tmp_path: Path) -> None:
+    logger = InferenceLogger(tmp_path / "logs")
+    logger.log(
+        InferenceLogEntry(
+            request_id="req-cli",
+            pipeline_run_id="run-cli",
+            mode="direct",
+            model="gpt-4o",
+            prompt_template="tests/direct",
+            source_doc_id="doc-001",
+            source_section_id="sec-001",
+            input_tokens=100,
+            output_tokens=40,
+            estimated_cost_usd=0.00065,
+            latency_ms=50,
+            status="success",
+            schema_valid=True,
+            timestamp=datetime(2026, 4, 15, 15, 0, tzinfo=UTC),
+        )
+    )
+
+    runner = CliRunner()
+    result = runner.invoke(cli, ["inference", "costs", "--log-dir", str(tmp_path / "logs")])
+
+    assert result.exit_code == 0
+    assert "Requests: 1" in result.output
+    assert "BY MODEL" in result.output
+    assert "gpt-4o\t1\t100\t40\t0.000650" in result.output
 
 
 def _build_config() -> InferenceConfig:
@@ -240,6 +369,24 @@ def _build_config() -> InferenceConfig:
                 "max_batch_size": 50000,
                 "poll_interval_seconds": 60,
                 "max_poll_duration_seconds": 86400,
+            },
+            "pricing": {
+                "gpt-4o": {
+                    "input_per_million_tokens": 2.5,
+                    "output_per_million_tokens": 10.0,
+                },
+                "gpt-4o-mini": {
+                    "input_per_million_tokens": 0.15,
+                    "output_per_million_tokens": 0.60,
+                },
+                "gpt-4.1": {
+                    "input_per_million_tokens": 2.0,
+                    "output_per_million_tokens": 8.0,
+                },
+                "gpt-4.1-mini": {
+                    "input_per_million_tokens": 0.4,
+                    "output_per_million_tokens": 1.6,
+                },
             },
             "api_key": "test-secret",
         }
