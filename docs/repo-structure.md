@@ -178,7 +178,16 @@ knowledge-forge/
     │       ├── tables.json
     │       ├── page_map.json
     │       ├── meta.json
-    │       └── quality.json
+    │       ├── quality.json
+    │       └── runs/
+    │           └── {parser}/
+    │               ├── content.md
+    │               ├── structure.json
+    │               ├── headings.json
+    │               ├── tables.json
+    │               ├── page_map.json
+    │               ├── meta.json
+    │               └── quality.json
     ├── sections/                    # canonical sections
     │   └── {doc_id}/
     │       └── {section_id}.json
@@ -263,6 +272,10 @@ It carries:
 `quality.json` stores the parser quality report with:
 - per-metric scores for heading coverage, table extraction, text completeness, structure depth, and page coverage
 - overall score and the configured acceptance threshold
+
+When fallback parsing is attempted, the selected parser's artifacts stay at the
+top level of `data/parsed/{doc_id}/`, and each candidate parser run is also
+preserved under `data/parsed/{doc_id}/runs/{parser}/` for comparison.
 
 ### Idempotency
 

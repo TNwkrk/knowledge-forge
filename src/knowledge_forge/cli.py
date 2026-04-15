@@ -226,9 +226,17 @@ def normalize(args: tuple[str, ...], normalize_all: bool) -> None:
 @cli.command("parse")
 @click.argument("args", nargs=-1, type=str)
 @click.option("--all", "parse_all", is_flag=True, help="Parse every normalized document.")
+@click.option(
+    "--parser",
+    "parser_name",
+    type=click.Choice(["auto", "docling", "fallback"], case_sensitive=False),
+    default="auto",
+    show_default=True,
+    help="Parser mode to run.",
+)
 @click.option("--quality", "show_quality", is_flag=True, help="Show parse quality for a parsed document.")
-def parse(args: tuple[str, ...], parse_all: bool, show_quality: bool) -> None:
-    """Parse one or more normalized documents with Docling."""
+def parse(args: tuple[str, ...], parse_all: bool, parser_name: str, show_quality: bool) -> None:
+    """Parse one or more normalized documents with parser selection support."""
     if show_quality:
         if parse_all:
             raise click.ClickException("parse --quality does not support --all")
@@ -254,18 +262,20 @@ def parse(args: tuple[str, ...], parse_all: bool, show_quality: bool) -> None:
             return
 
         for manifest_doc_id in normalized_doc_ids:
-            result = parse_document(manifest_doc_id, data_dir=data_dir)
+            result = parse_document(manifest_doc_id, data_dir=data_dir, parser=parser_name)
             click.echo(
-                f"Parsed {manifest_doc_id} -> {result.content_path} (quality {result.quality_report.overall_score:.2f})"
+                f"Parsed {manifest_doc_id} with {result.parser} -> {result.content_path} "
+                f"(quality {result.quality_report.overall_score:.2f})"
             )
         return
 
     try:
-        result = parse_document(doc_id, data_dir=data_dir)
+        result = parse_document(doc_id, data_dir=data_dir, parser=parser_name)
     except (FileNotFoundError, RuntimeError) as exc:
         raise click.ClickException(str(exc)) from exc
 
     click.echo(f"Parsed {doc_id}")
+    click.echo(f"Parser: {result.parser}")
     click.echo(f"Content: {result.content_path}")
     click.echo(f"Quality score: {result.quality_report.overall_score:.2f}")
 

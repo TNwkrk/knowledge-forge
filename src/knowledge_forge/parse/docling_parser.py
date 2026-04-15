@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import json
+import shutil
 import time
 from enum import Enum
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict
 
@@ -18,6 +19,7 @@ from knowledge_forge.parse.quality import (
     PageMapArtifact,
     PageMapItem,
     ParseArtifactBundle,
+    ParseCandidateRun,
     ParseMetadata,
     ParsePageArtifact,
     ParseQualityReport,
@@ -25,8 +27,11 @@ from knowledge_forge.parse.quality import (
     ParseTextArtifact,
     StructuredParseArtifact,
     TablesArtifact,
+    load_parse_quality_thresholds,
     score_bundle,
 )
+
+from . import fallback_parser
 
 
 class ParseResult(BaseModel):
@@ -42,6 +47,7 @@ class ParseResult(BaseModel):
     page_map_path: Path
     meta_path: Path
     quality_path: Path
+    parser: str
     parser_version: str
     page_count: int
     processing_time: float
@@ -58,7 +64,75 @@ _HEADING_LEVELS: dict[str, int] = {
 }
 
 
-def parse_document(doc_id: str, *, data_dir: Path | None = None) -> ParseResult:
+def parse_document(
+    doc_id: str,
+    *,
+    data_dir: Path | None = None,
+    parser: Literal["auto", "docling", "fallback"] = "auto",
+) -> ParseResult:
+    """Parse a normalized document and select the best available parser result."""
+    if parser not in {"auto", "docling", "fallback"}:
+        raise ValueError(f"unsupported parser mode '{parser}'")
+
+    if parser == "fallback":
+        return _parse_with_fallback(doc_id, data_dir=data_dir)
+
+    primary_result = _parse_with_docling(doc_id, data_dir=data_dir)
+    primary_run_dir = _archive_result(primary_result, primary_result.parser)
+    candidate_runs = [
+        ParseCandidateRun(
+            parser=primary_result.parser,
+            parser_version=primary_result.parser_version,
+            artifact_dir=str(primary_run_dir),
+            overall_score=primary_result.quality_report.overall_score,
+            passes_threshold=primary_result.quality_report.passes_threshold,
+            selected=True,
+            reason="primary parser",
+        )
+    ]
+    fallback_name = fallback_parser.available_fallback_parser() or "marker"
+    fallback_attempted = False
+    fallback_reason: str | None = None
+
+    if parser == "auto":
+        thresholds = load_parse_quality_thresholds()
+        if primary_result.quality_report.overall_score < thresholds.minimum_quality_score:
+            fallback_attempted = True
+            try:
+                fallback_result = _parse_with_fallback(doc_id, data_dir=data_dir, canonical=False)
+            except RuntimeError as exc:
+                fallback_reason = str(exc)
+            else:
+                candidate_runs.append(
+                    ParseCandidateRun(
+                        parser=fallback_result.parser,
+                        parser_version=fallback_result.parser_version,
+                        artifact_dir=str(fallback_result.content_path.parent),
+                        overall_score=fallback_result.quality_report.overall_score,
+                        passes_threshold=fallback_result.quality_report.passes_threshold,
+                        selected=False,
+                        reason="quality fallback candidate",
+                    )
+                )
+                if fallback_result.quality_report.overall_score > primary_result.quality_report.overall_score:
+                    _promote_result(fallback_result)
+                    candidate_runs[0].selected = False
+                    candidate_runs[0].reason = "lower quality than fallback parser"
+                    candidate_runs[-1].selected = True
+                    candidate_runs[-1].reason = "selected higher quality fallback parser"
+
+    selected_result = _load_result_from_disk(doc_id, get_data_dir(data_dir))
+    _update_candidate_metadata(
+        selected_result.meta_path,
+        candidate_runs=candidate_runs,
+        fallback_parser_name=fallback_name,
+        fallback_attempted=fallback_attempted,
+        fallback_reason=fallback_reason,
+    )
+    return selected_result
+
+
+def _parse_with_docling(doc_id: str, *, data_dir: Path | None = None) -> ParseResult:
     """Run Docling against a normalized PDF and persist the parse artifacts."""
     resolved_data_dir = get_data_dir(data_dir)
     manifest = load_manifest(resolved_data_dir, doc_id)
@@ -140,6 +214,7 @@ def parse_document(doc_id: str, *, data_dir: Path | None = None) -> ParseResult:
         page_map_path=page_map_path,
         meta_path=meta_path,
         quality_path=quality_path,
+        parser="docling",
         parser_version=parser_version,
         page_count=page_count,
         processing_time=round(processing_time, 4),
@@ -147,7 +222,11 @@ def parse_document(doc_id: str, *, data_dir: Path | None = None) -> ParseResult:
     )
 
 
-def parse_all_documents(*, data_dir: Path | None = None) -> list[ParseResult]:
+def parse_all_documents(
+    *,
+    data_dir: Path | None = None,
+    parser: Literal["auto", "docling", "fallback"] = "auto",
+) -> list[ParseResult]:
     """Parse every manifest that has a normalized PDF available."""
     resolved_data_dir = get_data_dir(data_dir)
     results: list[ParseResult] = []
@@ -155,8 +234,114 @@ def parse_all_documents(*, data_dir: Path | None = None) -> list[ParseResult]:
         normalized_path = resolved_data_dir / "normalized" / f"{manifest.doc_id}.pdf"
         if not normalized_path.exists():
             continue
-        results.append(parse_document(manifest.doc_id, data_dir=resolved_data_dir))
+        results.append(parse_document(manifest.doc_id, data_dir=resolved_data_dir, parser=parser))
     return results
+
+
+def _parse_with_fallback(
+    doc_id: str,
+    *,
+    data_dir: Path | None = None,
+    canonical: bool = True,
+) -> ParseResult:
+    """Run the fallback parser and optionally promote its artifacts to the canonical location."""
+    resolved_data_dir = get_data_dir(data_dir)
+    output_dir = resolved_data_dir / "parsed" / doc_id / "runs" / "marker"
+    fallback_result = fallback_parser.parse_document(doc_id, data_dir=resolved_data_dir, output_dir=output_dir)
+    if canonical:
+        _promote_result(fallback_result)
+    _persist_manifest_status(load_manifest(resolved_data_dir, doc_id), resolved_data_dir)
+
+    target_dir = resolved_data_dir / "parsed" / doc_id if canonical else output_dir
+    return ParseResult(
+        doc_id=fallback_result.doc_id,
+        content_path=target_dir / "content.md",
+        structure_path=target_dir / "structure.json",
+        headings_path=target_dir / "headings.json",
+        tables_path=target_dir / "tables.json",
+        page_map_path=target_dir / "page_map.json",
+        meta_path=target_dir / "meta.json",
+        quality_path=target_dir / "quality.json",
+        parser=fallback_result.parser,
+        parser_version=fallback_result.parser_version,
+        page_count=fallback_result.page_count,
+        processing_time=fallback_result.processing_time,
+        quality_report=fallback_result.quality_report,
+    )
+
+
+def _archive_result(result: ParseResult, parser_name: str) -> Path:
+    """Store the canonical artifacts under a parser-specific run directory for inspection."""
+    run_dir = result.content_path.parent / "runs" / parser_name
+    run_dir.mkdir(parents=True, exist_ok=True)
+    for artifact_path in (
+        result.content_path,
+        result.structure_path,
+        result.headings_path,
+        result.tables_path,
+        result.page_map_path,
+        result.meta_path,
+        result.quality_path,
+    ):
+        shutil.copy2(artifact_path, run_dir / artifact_path.name)
+    return run_dir
+
+
+def _promote_result(result: Any) -> None:
+    """Copy a parser run into the canonical top-level parse artifact paths."""
+    artifact_dir = result.content_path.parent
+    output_dir = artifact_dir.parent.parent if artifact_dir.parent.name == "runs" else artifact_dir
+    if output_dir.name == "runs":
+        output_dir = output_dir.parent
+    for artifact_path in (
+        result.content_path,
+        result.structure_path,
+        result.headings_path,
+        result.tables_path,
+        result.page_map_path,
+        result.meta_path,
+        result.quality_path,
+    ):
+        shutil.copy2(artifact_path, output_dir / artifact_path.name)
+
+
+def _update_candidate_metadata(
+    meta_path: Path,
+    *,
+    candidate_runs: list[ParseCandidateRun],
+    fallback_parser_name: str | None,
+    fallback_attempted: bool,
+    fallback_reason: str | None,
+) -> None:
+    """Augment the selected parse metadata with candidate parser details."""
+    metadata = ParseMetadata.model_validate_json(meta_path.read_text(encoding="utf-8"))
+    metadata.candidate_runs = candidate_runs
+    metadata.fallback_parser = fallback_parser_name
+    metadata.fallback_attempted = fallback_attempted
+    metadata.fallback_reason = fallback_reason
+    _write_json(meta_path, metadata.model_dump(mode="json"))
+
+
+def _load_result_from_disk(doc_id: str, data_dir: Path) -> ParseResult:
+    """Rehydrate a parse result from the selected artifact paths on disk."""
+    output_dir = data_dir / "parsed" / doc_id
+    meta = ParseMetadata.model_validate_json((output_dir / "meta.json").read_text(encoding="utf-8"))
+    quality = ParseQualityReport.model_validate_json((output_dir / "quality.json").read_text(encoding="utf-8"))
+    return ParseResult(
+        doc_id=doc_id,
+        content_path=output_dir / "content.md",
+        structure_path=output_dir / "structure.json",
+        headings_path=output_dir / "headings.json",
+        tables_path=output_dir / "tables.json",
+        page_map_path=output_dir / "page_map.json",
+        meta_path=output_dir / "meta.json",
+        quality_path=output_dir / "quality.json",
+        parser=meta.parser,
+        parser_version=meta.parser_version,
+        page_count=meta.page_count,
+        processing_time=meta.processing_time_seconds,
+        quality_report=quality,
+    )
 
 
 def _get_document_converter() -> Any:
