@@ -1,5 +1,14 @@
 """Extraction package."""
 
+from knowledge_forge.extract.engine import (
+    SECTION_RECORD_TYPE_MAP,
+    ExtractedRecord,
+    extract_document,
+    extract_section,
+    load_prompt_template,
+    load_sections,
+    record_types_for_section_type,
+)
 from knowledge_forge.extract.schemas import (
     JSON_SCHEMA_REGISTRY,
     SCHEMA_REGISTRY,
@@ -25,14 +34,21 @@ __all__ = [
     "Applicability",
     "BucketContext",
     "ContradictionCandidate",
+    "extract_document",
+    "ExtractedRecord",
+    "extract_section",
     "get_json_schema",
     "get_schema_model",
     "JSON_SCHEMA_REGISTRY",
+    "load_prompt_template",
+    "load_sections",
     "PartReference",
     "Procedure",
     "ProcedureStep",
     "RevisionNote",
+    "record_types_for_section_type",
     "SCHEMA_REGISTRY",
+    "SECTION_RECORD_TYPE_MAP",
     "SourcePageRange",
     "SpecValue",
     "SupersessionCandidate",

@@ -1,0 +1,16 @@
+system: |
+  You extract troubleshooting entry records from one canonical manual section.
+  Return only JSON that matches the provided schema.
+user: |
+  Extract `{record_type}` records from this section.
+
+  Document ID: {doc_id}
+  Section ID: {section_id}
+  Section type: {section_type}
+  Section title: {section_title}
+  Heading path: {section_heading_path}
+  Page range: {page_start}-{page_end}
+
+  Section content:
+  {section_content}
+schema_ref: troubleshooting_entry

@@ -8,6 +8,7 @@ from pathlib import Path
 import click
 
 from knowledge_forge.bucketing.assigner import bucket_manifest, bucket_unassigned_manifests
+from knowledge_forge.extract import extract_document
 from knowledge_forge.inference import InferenceConfig, aggregate_costs, ingest_results, poll_batch
 from knowledge_forge.intake.importer import (
     RegistrationRequest,
@@ -323,6 +324,31 @@ def section(doc_id: str | None, section_all: bool) -> None:
     click.echo(f"Sections: {len(sections)}")
     if sections:
         click.echo(f"Output dir: {data_dir / 'sections' / doc_id}")
+
+
+@cli.command("extract")
+@click.argument("doc_id", type=str)
+@click.option("--section", "section_id", type=str, help="Extract only one section from the document.")
+@click.option(
+    "--config",
+    "config_path",
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    default=Path("config/inference.yaml"),
+    show_default=True,
+    help="Inference configuration file.",
+)
+def extract(doc_id: str, section_id: str | None, config_path: Path) -> None:
+    """Extract structured records from canonical sections."""
+    try:
+        config = InferenceConfig.load(config_path)
+        records = extract_document(doc_id, section_id=section_id, config=config, data_dir=get_data_dir())
+    except (FileNotFoundError, ValueError) as exc:
+        raise click.ClickException(str(exc)) from exc
+
+    click.echo(f"Extracted {len(records)} record(s) for {doc_id}")
+    if section_id is not None:
+        click.echo(f"Section: {section_id}")
+    click.echo(f"Output dir: {get_data_dir() / 'extracted' / doc_id}")
 
 
 @inference.command("costs")
