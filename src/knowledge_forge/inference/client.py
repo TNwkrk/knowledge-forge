@@ -13,6 +13,8 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from knowledge_forge.inference.config import InferenceConfig
 
+MAX_JSON_ERROR_SNIPPET_LENGTH = 200
+
 
 class InferenceResult(BaseModel):
     """Typed response details returned from a direct inference call."""
@@ -73,8 +75,8 @@ class InferenceClient:
             try:
                 parsed_json = json.loads(response_text)
             except json.JSONDecodeError as exc:
-                snippet = response_text[:200]
-                if len(response_text) > 200:
+                snippet = response_text[:MAX_JSON_ERROR_SNIPPET_LENGTH]
+                if len(response_text) > MAX_JSON_ERROR_SNIPPET_LENGTH:
                     snippet += "..."
                 raise ValueError(f"response was not valid JSON: {exc.msg}. Output snippet: {snippet!r}") from exc
             try:
