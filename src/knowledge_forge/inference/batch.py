@@ -6,6 +6,7 @@ import json
 import time
 from collections.abc import Iterator
 from datetime import UTC, datetime
+from io import StringIO
 from pathlib import Path
 from typing import Any
 
@@ -320,10 +321,11 @@ def ingest_results(
                     schema=schemas_by_custom_id.get(custom_id) if schemas_by_custom_id else None,
                 )
             except ValueError as exc:
+                response_status_code = response.get("status_code")
                 failure = _classify_failure(
                     custom_id=custom_id,
                     message=str(exc),
-                    status_code=response.get("status_code") if isinstance(response.get("status_code"), int) else None,
+                    status_code=response_status_code if isinstance(response_status_code, int) else None,
                     request_id=_extract_request_id(response_body),
                 )
                 failures.append(failure)
@@ -411,7 +413,7 @@ def _download_file_content(client: Any, file_id: str) -> str:
 
 
 def _iter_jsonl(payload: str) -> Iterator[dict[str, Any]]:
-    for raw_line in payload.splitlines():
+    for raw_line in StringIO(payload):
         line = raw_line.strip()
         if not line:
             continue

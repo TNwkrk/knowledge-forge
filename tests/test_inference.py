@@ -636,22 +636,24 @@ def test_poll_batch_returns_failed_terminal_status() -> None:
     assert status.error_file_id == "file-err-999"
 
 
-def test_poll_batch_allows_zero_timeout_override() -> None:
-    sdk_client = SimpleNamespace(
-        batches=SimpleNamespace(
-            retrieve=lambda _batch_id: SimpleNamespace(
-                id="batch-zero",
-                status="in_progress",
-                created_at=1_765_698_600,
-                request_counts=SimpleNamespace(total=1),
-                output_file_id=None,
-                error_file_id=None,
-                completed_at=None,
-                failed_at=None,
-            )
+def test_poll_batch_respects_zero_timeout_parameters_without_sleeping() -> None:
+    retrieve_calls: list[str] = []
+
+    def _retrieve(batch_id: str) -> SimpleNamespace:
+        retrieve_calls.append(batch_id)
+        return SimpleNamespace(
+            id="batch-zero",
+            status="in_progress",
+            created_at=1_765_698_600,
+            request_counts=SimpleNamespace(total=1),
+            output_file_id=None,
+            error_file_id=None,
+            completed_at=None,
+            failed_at=None,
         )
-    )
-    sleeps: list[int] = []
+
+    sdk_client = SimpleNamespace(batches=SimpleNamespace(retrieve=_retrieve))
+    sleep_calls: list[int] = []
 
     with pytest.raises(TimeoutError):
         poll_batch(
@@ -660,11 +662,12 @@ def test_poll_batch_allows_zero_timeout_override() -> None:
             sdk_client=sdk_client,
             poll_interval_seconds=0,
             max_poll_duration_seconds=0,
-            sleep_fn=sleeps.append,
+            sleep_fn=sleep_calls.append,
             monotonic_fn=iter([0.0, 0.0]).__next__,
         )
 
-    assert sleeps == []
+    assert sleep_calls == []
+    assert retrieve_calls == ["batch-zero"]
 
 
 def test_ingest_results_parses_successes_classifies_failures_and_logs(tmp_path: Path) -> None:
