@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import json
+import logging
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Iterator
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
+
+LOGGER = logging.getLogger(__name__)
 
 
 class InferenceLogEntry(BaseModel):
@@ -60,7 +63,8 @@ def iter_log_entries(log_dir: Path) -> Iterator[InferenceLogEntry]:
         try:
             payload = json.loads(path.read_text(encoding="utf-8"))
             yield InferenceLogEntry.model_validate(payload)
-        except (json.JSONDecodeError, ValidationError):
+        except (json.JSONDecodeError, ValidationError) as exc:
+            LOGGER.warning("skipping invalid inference log entry '%s': %s", path, exc)
             continue
 
 

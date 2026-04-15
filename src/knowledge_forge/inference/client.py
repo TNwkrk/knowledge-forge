@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from pathlib import Path
 from time import perf_counter
 from typing import Any
@@ -18,6 +19,7 @@ from knowledge_forge.inference.logger import InferenceLogEntry, InferenceLogger,
 from knowledge_forge.intake.importer import get_data_dir
 
 MAX_JSON_ERROR_SNIPPET_LENGTH = 200
+LOGGER = logging.getLogger(__name__)
 
 
 class InferenceResult(BaseModel):
@@ -191,7 +193,8 @@ class InferenceClient:
     def _safe_log(self, entry: InferenceLogEntry) -> None:
         try:
             self._logger.log(entry)
-        except OSError:
+        except OSError as exc:
+            LOGGER.warning("failed to persist inference log entry: %s", exc)
             return
 
 
