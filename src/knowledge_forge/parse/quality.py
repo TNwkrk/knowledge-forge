@@ -125,6 +125,22 @@ class ParseMetadata(BaseModel):
     timings: Any = None
     confidence: Any = None
     errors: list[Any] = Field(default_factory=list)
+    fallback_parser: str | None = None
+    fallback_attempted: bool = False
+    fallback_reason: str | None = None
+    candidate_runs: list["ParseCandidateRun"] = Field(default_factory=list)
+
+
+class ParseCandidateRun(BaseModel):
+    """A single parser candidate considered for a document."""
+
+    parser: str
+    parser_version: str
+    artifact_dir: str
+    overall_score: float | None = Field(default=None, ge=0, le=100)
+    passes_threshold: bool | None = None
+    selected: bool = False
+    reason: str | None = None
 
 
 class ParseQualityMetrics(BaseModel):

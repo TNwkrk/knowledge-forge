@@ -82,6 +82,7 @@ The primary parser (Docling) produces structured output:
 `structure.json` is the canonical parser-neutral artifact envelope: `doc_id`, `parser`, `parser_version`, `page_count`, normalized `texts`, normalized `tables`, and normalized `pages`.
 
 If the primary parser scores below the configured quality threshold, a fallback parser (MinerU or Marker) runs and its outputs are compared.
+The selected parser's artifacts remain at the top-level document paths, while parser-specific runs stay under `data/parsed/{doc_id}/runs/{parser}/` for inspection.
 
 ### Stage 4 — Canonical sectioning
 

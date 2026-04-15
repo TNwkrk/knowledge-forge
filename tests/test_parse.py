@@ -15,7 +15,7 @@ from knowledge_forge.cli import cli
 from knowledge_forge.intake.importer import RegistrationRequest, load_manifest, register_document
 from knowledge_forge.intake.manifest import DocumentStatus
 from knowledge_forge.parse.docling_parser import parse_document
-from knowledge_forge.parse.quality import score_parse
+from knowledge_forge.parse.quality import ParseQualityThresholds, score_parse
 
 
 def _write_pdf(path: Path, text: bytes = b"BT\n/F1 12 Tf\n10 20 Td\n(Knowledge Forge parse) Tj\nET") -> Path:
@@ -190,12 +190,13 @@ def test_parse_cli_supports_doc_id_and_all(monkeypatch, tmp_path: Path) -> None:
     env = {"KNOWLEDGE_FORGE_DATA_DIR": str(data_dir)}
     calls: list[str] = []
 
-    def fake_parse(doc_id: str, *, data_dir: Path | None = None) -> object:
-        calls.append(doc_id)
+    def fake_parse(doc_id: str, *, data_dir: Path | None = None, parser: str = "auto") -> object:
+        calls.append(f"{doc_id}:{parser}")
         assert data_dir == Path(env["KNOWLEDGE_FORGE_DATA_DIR"])
         return SimpleNamespace(
             content_path=data_dir / "parsed" / doc_id / "content.md",
             quality_report=SimpleNamespace(overall_score=91.5),
+            parser="docling" if parser == "auto" else parser,
         )
 
     monkeypatch.setattr("knowledge_forge.cli.parse_document", fake_parse)
@@ -208,7 +209,31 @@ def test_parse_cli_supports_doc_id_and_all(monkeypatch, tmp_path: Path) -> None:
     assert every.exit_code == 0
     assert f"Parsed {first_doc_id}" in every.output
     assert f"Parsed {second_doc_id}" in every.output
-    assert calls == [first_doc_id, first_doc_id, second_doc_id]
+    assert calls == [f"{first_doc_id}:auto", f"{first_doc_id}:auto", f"{second_doc_id}:auto"]
+
+
+def test_parse_cli_supports_explicit_fallback_parser(monkeypatch, tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    doc_id = _register_normalized_fixture(_write_pdf(tmp_path / "fixture.pdf"), data_dir)
+    runner = CliRunner()
+    env = {"KNOWLEDGE_FORGE_DATA_DIR": str(data_dir)}
+    calls: list[str] = []
+
+    def fake_parse(doc_id: str, *, data_dir: Path | None = None, parser: str = "auto") -> object:
+        calls.append(parser)
+        return SimpleNamespace(
+            content_path=data_dir / "parsed" / doc_id / "content.md",
+            quality_report=SimpleNamespace(overall_score=84.2),
+            parser="marker",
+        )
+
+    monkeypatch.setattr("knowledge_forge.cli.parse_document", fake_parse)
+
+    result = runner.invoke(cli, ["parse", doc_id, "--parser", "fallback"], env=env)
+
+    assert result.exit_code == 0
+    assert "Parser: marker" in result.output
+    assert calls == ["fallback"]
 
 
 def test_parse_quality_cli_reports_metric_breakdown(monkeypatch, tmp_path: Path) -> None:
@@ -368,6 +393,177 @@ def test_score_parse_uses_configured_threshold_and_writes_report(tmp_path: Path)
     persisted = json.loads((output_dir / "quality.json").read_text(encoding="utf-8"))
     assert persisted["overall_score"] == report.overall_score
     assert persisted["passes_threshold"] is False
+
+
+def test_parse_document_uses_fallback_when_primary_quality_is_low(monkeypatch, tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    source = _write_pdf(tmp_path / "manual.pdf")
+    doc_id = _register_normalized_fixture(source, data_dir)
+    structure = {
+        "texts": [
+            {"self_ref": "#/texts/0", "label": "text", "text": "thin body", "prov": [{"page_no": 1}]},
+        ],
+        "tables": [],
+        "pages": {
+            "1": {"page_no": 1, "size": {"width": 612, "height": 792}},
+        },
+    }
+    fake_document = _FakeDoclingDocument(structure=structure, markdown="thin body")
+    fake_result = SimpleNamespace(
+        status="success",
+        document=fake_document,
+        input=SimpleNamespace(document_hash="abc123", page_count=1),
+        confidence={"mean_score": 0.30},
+        timings={"total": 0.4},
+        errors=[],
+    )
+    fake_converter = _FakeConverter(fake_result)
+    monkeypatch.setattr("knowledge_forge.parse.docling_parser._get_document_converter", lambda: fake_converter)
+    monkeypatch.setattr("knowledge_forge.parse.docling_parser._get_docling_version", lambda: "test-docling")
+    monkeypatch.setattr(
+        "knowledge_forge.parse.docling_parser.load_parse_quality_thresholds",
+        lambda *args, **kwargs: ParseQualityThresholds(minimum_quality_score=95.0),
+    )
+    monkeypatch.setattr(
+        "knowledge_forge.parse.docling_parser.fallback_parser.available_fallback_parser",
+        lambda: "marker",
+    )
+
+    def fake_fallback(doc_id: str, *, data_dir: Path | None = None, output_dir: Path | None = None) -> object:
+        assert output_dir is not None
+        output_dir.mkdir(parents=True, exist_ok=True)
+        quality_payload = {
+            "doc_id": doc_id,
+            "parser": "marker",
+            "parser_version": "test-marker",
+            "page_count": 1,
+            "generated_at": "2026-04-15T00:00:00+00:00",
+            "artifact_schema_version": "1.0",
+            "metrics": {
+                "heading_coverage": 100.0,
+                "table_extraction_rate": 100.0,
+                "text_completeness": 100.0,
+                "structure_depth": 100.0,
+                "page_coverage": 100.0,
+            },
+            "overall_score": 100.0,
+            "thresholds": {"minimum_quality_score": 70.0},
+            "passes_threshold": True,
+        }
+        (output_dir / "content.md").write_text("# Fallback Title\n\nRecovered content", encoding="utf-8")
+        (output_dir / "structure.json").write_text(
+            json.dumps(
+                {
+                    "doc_id": doc_id,
+                    "parser": "marker",
+                    "parser_version": "test-marker",
+                    "page_count": 1,
+                    "texts": [
+                        {
+                            "item_ref": "#/texts/0",
+                            "label": "title",
+                            "text": "Fallback Title",
+                            "page_numbers": [1],
+                        },
+                        {
+                            "item_ref": "#/texts/1",
+                            "label": "text",
+                            "text": "Recovered content",
+                            "page_numbers": [1],
+                        },
+                    ],
+                    "tables": [],
+                    "pages": [{"page_number": 1, "width": 612.0, "height": 792.0, "source_ref": "#/pages/1"}],
+                }
+            ),
+            encoding="utf-8",
+        )
+        (output_dir / "headings.json").write_text(
+            json.dumps(
+                {
+                    "doc_id": doc_id,
+                    "headings": [
+                        {
+                            "title": "Fallback Title",
+                            "label": "title",
+                            "level": 1,
+                            "page_number": 1,
+                            "item_ref": "#/texts/0",
+                            "children": [],
+                        }
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
+        (output_dir / "tables.json").write_text(json.dumps({"doc_id": doc_id, "tables": []}), encoding="utf-8")
+        (output_dir / "page_map.json").write_text(
+            json.dumps(
+                {
+                    "doc_id": doc_id,
+                    "items": [
+                        {
+                            "item_ref": "#/texts/0",
+                            "item_type": "text",
+                            "label": "title",
+                            "page_numbers": [1],
+                            "text": "Fallback Title",
+                        }
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
+        (output_dir / "meta.json").write_text(
+            json.dumps(
+                {
+                    "doc_id": doc_id,
+                    "parser": "marker",
+                    "parser_version": "test-marker",
+                    "processed_at": "2026-04-15T00:00:00Z",
+                    "processing_time_seconds": 0.2,
+                    "page_count": 1,
+                    "status": "success",
+                    "input_path": str(data_dir / "normalized" / f"{doc_id}.pdf"),
+                    "input_checksum": "1" * 64,
+                    "document_hash": None,
+                    "timings": {"total": 0.2},
+                    "confidence": {"mean_score": 0.9},
+                    "errors": [],
+                }
+            ),
+            encoding="utf-8",
+        )
+        (output_dir / "quality.json").write_text(json.dumps(quality_payload), encoding="utf-8")
+        return SimpleNamespace(
+            doc_id=doc_id,
+            parser="marker",
+            content_path=output_dir / "content.md",
+            structure_path=output_dir / "structure.json",
+            headings_path=output_dir / "headings.json",
+            tables_path=output_dir / "tables.json",
+            page_map_path=output_dir / "page_map.json",
+            meta_path=output_dir / "meta.json",
+            quality_path=output_dir / "quality.json",
+            parser_version="test-marker",
+            page_count=1,
+            processing_time=0.2,
+            quality_report=quality_payload,
+        )
+
+    monkeypatch.setattr("knowledge_forge.parse.docling_parser.fallback_parser.parse_document", fake_fallback)
+
+    result = parse_document(doc_id, data_dir=data_dir, parser="auto")
+
+    assert result.parser == "marker"
+    assert result.content_path.read_text(encoding="utf-8").startswith("# Fallback Title")
+    meta = json.loads(result.meta_path.read_text(encoding="utf-8"))
+    assert meta["parser"] == "marker"
+    assert meta["fallback_attempted"] is True
+    assert len(meta["candidate_runs"]) == 2
+    assert meta["candidate_runs"][1]["selected"] is True
+    assert (data_dir / "parsed" / doc_id / "runs" / "docling" / "content.md").exists()
+    assert (data_dir / "parsed" / doc_id / "runs" / "marker" / "content.md").exists()
 
 
 def test_parse_package_imports_without_prefect(monkeypatch) -> None:
