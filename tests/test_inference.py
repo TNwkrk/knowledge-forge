@@ -424,6 +424,24 @@ def test_batch_builder_enforces_max_batch_size() -> None:
         )
 
 
+def test_batch_builder_rejects_duplicate_custom_ids() -> None:
+    builder = BatchBuilder(_build_config())
+    builder.add_request(
+        custom_id="req-001",
+        prompt="Prompt one",
+        system="System one",
+        model="gpt-4o",
+    )
+
+    with pytest.raises(ValueError, match="duplicate custom_id 'req-001' is not allowed in a batch"):
+        builder.add_request(
+            custom_id="req-001",
+            prompt="Prompt two",
+            system="System two",
+            model="gpt-4o",
+        )
+
+
 def test_batch_builder_rejects_mixed_models_in_same_batch() -> None:
     builder = BatchBuilder(_build_config())
     builder.add_request(
