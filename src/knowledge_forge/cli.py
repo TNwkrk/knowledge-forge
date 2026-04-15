@@ -8,7 +8,7 @@ from pathlib import Path
 import click
 
 from knowledge_forge.bucketing.assigner import bucket_manifest, bucket_unassigned_manifests
-from knowledge_forge.inference import aggregate_costs
+from knowledge_forge.inference import InferenceConfig, aggregate_costs, ingest_results, poll_batch
 from knowledge_forge.intake.importer import (
     RegistrationRequest,
     get_data_dir,
@@ -368,6 +368,71 @@ def inference_costs(log_dir: Path | None) -> None:
                 f"{pipeline_run_id}\t{totals.request_count}\t{totals.input_tokens}\t"
                 f"{totals.output_tokens}\t{totals.estimated_cost_usd:.6f}"
             )
+
+
+@inference.command("batch-status")
+@click.argument("batch_id", type=str)
+@click.option(
+    "--config",
+    "config_path",
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    default=Path("config/inference.yaml"),
+    show_default=True,
+    help="Inference configuration file.",
+)
+def inference_batch_status(batch_id: str, config_path: Path) -> None:
+    """Poll a batch job until it reaches a terminal state."""
+    try:
+        config = InferenceConfig.load(config_path)
+        status = poll_batch(batch_id, config)
+    except (FileNotFoundError, TimeoutError, ValueError) as exc:
+        raise click.ClickException(str(exc)) from exc
+
+    click.echo(f"Batch: {status.batch_id}")
+    click.echo(f"Status: {status.status}")
+    click.echo(f"Created: {status.created_at.isoformat()}")
+    click.echo(f"Requests: {status.request_count}")
+    if status.output_file_id is not None:
+        click.echo(f"Output file: {status.output_file_id}")
+    if status.error_file_id is not None:
+        click.echo(f"Error file: {status.error_file_id}")
+    if status.completed_at is not None:
+        click.echo(f"Completed: {status.completed_at.isoformat()}")
+    if status.failed_at is not None:
+        click.echo(f"Failed: {status.failed_at.isoformat()}")
+
+
+@inference.command("batch-ingest")
+@click.argument("batch_id", type=str)
+@click.option(
+    "--config",
+    "config_path",
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    default=Path("config/inference.yaml"),
+    show_default=True,
+    help="Inference configuration file.",
+)
+@click.option(
+    "--data-dir",
+    type=click.Path(file_okay=False, dir_okay=True, path_type=Path),
+    help="Override the data directory used for inference logs.",
+)
+def inference_batch_ingest(batch_id: str, config_path: Path, data_dir: Path | None) -> None:
+    """Download and summarize a completed batch output."""
+    try:
+        config = InferenceConfig.load(config_path)
+        results = ingest_results(batch_id, config, data_dir=data_dir)
+    except (FileNotFoundError, ValueError) as exc:
+        raise click.ClickException(str(exc)) from exc
+
+    click.echo(f"Batch: {results.batch_id}")
+    click.echo(f"Total: {results.stats.total}")
+    click.echo(f"Succeeded: {results.stats.succeeded}")
+    click.echo(f"Failed: {results.stats.failed}")
+    if results.retry_custom_ids:
+        click.echo(f"Retry custom_ids: {', '.join(results.retry_custom_ids)}")
+    else:
+        click.echo("Retry custom_ids: none")
 
 
 def _normalize_inspect(doc_id: str) -> None:

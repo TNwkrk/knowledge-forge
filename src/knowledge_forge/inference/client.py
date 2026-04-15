@@ -16,6 +16,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from knowledge_forge.inference.config import InferenceConfig
 from knowledge_forge.inference.cost import estimate_cost
 from knowledge_forge.inference.logger import InferenceLogEntry, InferenceLogger, utc_now
+from knowledge_forge.inference.retry import RetryPolicy, retry_transient
 from knowledge_forge.intake.importer import get_data_dir
 
 MAX_JSON_ERROR_SNIPPET_LENGTH = 200
@@ -63,6 +64,7 @@ class InferenceClient:
         source_section_id: str | None = None,
         batch_id: str | None = None,
         pipeline_run_id: str | None = None,
+        retry_policy: RetryPolicy | None = None,
     ) -> InferenceResult:
         """Send a direct request and normalize the OpenAI response."""
         request_model = model or self.config.default_model
@@ -97,7 +99,10 @@ class InferenceClient:
         schema_valid: bool | None = None if schema is None else False
 
         try:
-            response = self._client.responses.create(**request_args)
+            response = retry_transient(
+                lambda: self._client.responses.create(**request_args),
+                policy=retry_policy,
+            )
             latency_ms = int((perf_counter() - started) * 1000)
             response_text = _extract_response_text(response)
             input_tokens, output_tokens = _extract_token_counts(response)

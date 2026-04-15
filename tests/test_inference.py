@@ -14,12 +14,18 @@ from knowledge_forge.cli import cli
 from knowledge_forge.inference import (
     BatchBuilder,
     BatchJob,
+    BatchResults,
+    BatchStatus,
     InferenceClient,
     InferenceConfig,
     InferenceLogEntry,
     InferenceLogger,
+    RetryPolicy,
     aggregate_costs,
     estimate_cost,
+    ingest_results,
+    poll_batch,
+    retry_transient,
     submit_batch,
 )
 from knowledge_forge.inference.logger import iter_log_entries
@@ -509,6 +515,299 @@ def test_submit_batch_uploads_jsonl_and_returns_typed_job(tmp_path: Path) -> Non
     assert captured["completion_window"] == "24h"
 
 
+def test_retry_transient_retries_rate_limit_then_succeeds() -> None:
+    attempts = {"count": 0}
+    delays: list[float] = []
+
+    class FakeRateLimitError(RuntimeError):
+        status_code = 429
+
+    def operation() -> str:
+        attempts["count"] += 1
+        if attempts["count"] < 3:
+            raise FakeRateLimitError("rate limit exceeded")
+        return "ok"
+
+    result = retry_transient(
+        operation,
+        policy=RetryPolicy(max_retries=3, initial_delay_seconds=0.5, jitter_seconds=0.0),
+        sleep_fn=delays.append,
+    )
+
+    assert result == "ok"
+    assert attempts["count"] == 3
+    assert delays == [0.5, 1.0]
+
+
+def test_inference_client_retries_transient_direct_errors(tmp_path: Path) -> None:
+    attempts = {"count": 0}
+
+    class FakeTransientError(RuntimeError):
+        status_code = 503
+
+    response = SimpleNamespace(
+        id="resp_retry",
+        model="gpt-4o",
+        output_text="Recovered answer",
+        usage=SimpleNamespace(input_tokens=6, output_tokens=2),
+    )
+
+    def fake_create(**_: object) -> object:
+        attempts["count"] += 1
+        if attempts["count"] == 1:
+            raise FakeTransientError("temporarily unavailable")
+        return response
+
+    sdk_client = SimpleNamespace(responses=SimpleNamespace(create=fake_create))
+    logger = InferenceLogger(tmp_path / "logs")
+
+    result = InferenceClient(_build_config(), sdk_client=sdk_client, logger=logger).complete(
+        prompt="Retry this request.",
+        system="Answer clearly.",
+        retry_policy=RetryPolicy(max_retries=2, initial_delay_seconds=0.0),
+    )
+
+    assert result.response_text == "Recovered answer"
+    assert attempts["count"] == 2
+
+
+def test_poll_batch_detects_completion_after_in_progress() -> None:
+    responses = iter(
+        [
+            SimpleNamespace(
+                id="batch-123",
+                status="in_progress",
+                created_at=1_765_698_600,
+                request_counts=SimpleNamespace(total=2),
+                output_file_id=None,
+                error_file_id=None,
+                completed_at=None,
+                failed_at=None,
+            ),
+            SimpleNamespace(
+                id="batch-123",
+                status="completed",
+                created_at=1_765_698_600,
+                request_counts=SimpleNamespace(total=2),
+                output_file_id="file-out-123",
+                error_file_id="file-err-123",
+                completed_at=1_765_698_720,
+                failed_at=None,
+            ),
+        ]
+    )
+    sdk_client = SimpleNamespace(batches=SimpleNamespace(retrieve=lambda _batch_id: next(responses)))
+    sleeps: list[int] = []
+
+    status = poll_batch(
+        "batch-123",
+        _build_config(),
+        sdk_client=sdk_client,
+        poll_interval_seconds=5,
+        sleep_fn=sleeps.append,
+        monotonic_fn=iter([0.0, 1.0]).__next__,
+    )
+
+    assert isinstance(status, BatchStatus)
+    assert status.status == "completed"
+    assert status.output_file_id == "file-out-123"
+    assert sleeps == [5]
+
+
+def test_poll_batch_returns_failed_terminal_status() -> None:
+    sdk_client = SimpleNamespace(
+        batches=SimpleNamespace(
+            retrieve=lambda _batch_id: SimpleNamespace(
+                id="batch-999",
+                status="failed",
+                created_at=1_765_698_600,
+                request_counts=SimpleNamespace(total=1),
+                output_file_id=None,
+                error_file_id="file-err-999",
+                completed_at=None,
+                failed_at=1_765_698_660,
+            )
+        )
+    )
+
+    status = poll_batch("batch-999", _build_config(), sdk_client=sdk_client)
+
+    assert status.status == "failed"
+    assert status.error_file_id == "file-err-999"
+
+
+def test_ingest_results_parses_successes_classifies_failures_and_logs(tmp_path: Path) -> None:
+    output_lines = "\n".join(
+        [
+            json.dumps(
+                {
+                    "custom_id": "req-success",
+                    "response": {
+                        "status_code": 200,
+                        "body": {
+                            "id": "resp-success",
+                            "model": "gpt-4o",
+                            "output_text": json.dumps({"title": "Startup"}),
+                            "usage": {"input_tokens": 20, "output_tokens": 8},
+                        },
+                    },
+                }
+            ),
+            json.dumps(
+                {
+                    "custom_id": "req-invalid",
+                    "response": {
+                        "status_code": 200,
+                        "body": {
+                            "id": "resp-invalid",
+                            "model": "gpt-4o",
+                            "output_text": json.dumps({"steps": ["Missing title"]}),
+                            "usage": {"input_tokens": 10, "output_tokens": 4},
+                        },
+                    },
+                }
+            ),
+        ]
+    )
+    error_lines = "\n".join(
+        [
+            json.dumps(
+                {
+                    "custom_id": "req-rate-limit",
+                    "error": {"message": "Rate limit exceeded", "status_code": 429},
+                }
+            ),
+            json.dumps(
+                {
+                    "custom_id": "req-policy",
+                    "error": {"message": "Blocked by content policy", "status_code": 400},
+                }
+            ),
+        ]
+    )
+    sdk_client = SimpleNamespace(
+        batches=SimpleNamespace(
+            retrieve=lambda _batch_id: SimpleNamespace(
+                id="batch-456",
+                status="completed",
+                created_at=1_765_698_600,
+                request_counts=SimpleNamespace(total=4),
+                output_file_id="file-out-456",
+                error_file_id="file-err-456",
+                completed_at=1_765_698_900,
+                failed_at=None,
+            )
+        ),
+        files=SimpleNamespace(
+            retrieve_content=lambda file_id: output_lines if file_id == "file-out-456" else error_lines,
+        ),
+    )
+
+    results = ingest_results(
+        "batch-456",
+        _build_config(),
+        schemas_by_custom_id={
+            "req-success": {
+                "type": "object",
+                "properties": {"title": {"type": "string"}},
+                "required": ["title"],
+                "additionalProperties": False,
+            },
+            "req-invalid": {
+                "type": "object",
+                "properties": {"title": {"type": "string"}},
+                "required": ["title"],
+                "additionalProperties": False,
+            },
+        },
+        sdk_client=sdk_client,
+        data_dir=tmp_path,
+    )
+
+    assert isinstance(results, BatchResults)
+    assert results.stats.total == 4
+    assert results.stats.succeeded == 1
+    assert results.stats.failed == 3
+    assert results.successful[0].custom_id == "req-success"
+    assert {failure.custom_id: failure.error_type for failure in results.failed} == {
+        "req-invalid": "schema_invalid",
+        "req-rate-limit": "rate_limit",
+        "req-policy": "content_policy",
+    }
+    assert results.retry_custom_ids == ["req-rate-limit"]
+    log_entries = list(iter_log_entries(tmp_path / "inference_logs"))
+    assert len(log_entries) == 4
+    assert sum(1 for entry in log_entries if entry.status == "success") == 1
+    assert sum(1 for entry in log_entries if entry.status == "error") == 3
+
+
+def test_inference_batch_status_cli_reports_terminal_status(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    config_path = tmp_path / "inference.yaml"
+    _write_test_config(config_path)
+    monkeypatch.setenv("OPENAI_API_KEY", "test-secret")
+
+    def fake_poll_batch(batch_id: str, config: InferenceConfig) -> BatchStatus:
+        assert batch_id == "batch-cli"
+        assert config.default_model == "gpt-4o"
+        return BatchStatus(
+            batch_id=batch_id,
+            status="completed",
+            created_at=datetime(2026, 4, 15, 12, 0, tzinfo=UTC),
+            request_count=3,
+            output_file_id="file-out-cli",
+            error_file_id=None,
+            completed_at=datetime(2026, 4, 15, 12, 5, tzinfo=UTC),
+            failed_at=None,
+        )
+
+    monkeypatch.setattr("knowledge_forge.cli.poll_batch", fake_poll_batch)
+
+    runner = CliRunner()
+    result = runner.invoke(cli, ["inference", "batch-status", "batch-cli", "--config", str(config_path)])
+
+    assert result.exit_code == 0
+    assert "Status: completed" in result.output
+    assert "Output file: file-out-cli" in result.output
+
+
+def test_inference_batch_ingest_cli_reports_retry_queue(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    config_path = tmp_path / "inference.yaml"
+    _write_test_config(config_path)
+    monkeypatch.setenv("OPENAI_API_KEY", "test-secret")
+
+    def fake_ingest_results(batch_id: str, config: InferenceConfig, data_dir: Path | None = None) -> BatchResults:
+        assert batch_id == "batch-cli"
+        assert config.default_model == "gpt-4o"
+        assert data_dir == tmp_path / "data"
+        return BatchResults(
+            batch_id=batch_id,
+            successful=[],
+            failed=[],
+            stats={"total": 2, "succeeded": 1, "failed": 1},
+            retry_custom_ids=["req-001"],
+        )
+
+    monkeypatch.setattr("knowledge_forge.cli.ingest_results", fake_ingest_results)
+
+    runner = CliRunner()
+    result = runner.invoke(
+        cli,
+        [
+            "inference",
+            "batch-ingest",
+            "batch-cli",
+            "--config",
+            str(config_path),
+            "--data-dir",
+            str(tmp_path / "data"),
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert "Total: 2" in result.output
+    assert "Retry custom_ids: req-001" in result.output
+
+
 def test_aggregate_costs_rolls_up_logs(tmp_path: Path) -> None:
     logger = InferenceLogger(tmp_path / "logs")
     logger.log(
@@ -700,4 +999,26 @@ def _build_config_without_pricing() -> InferenceConfig:
             },
             "api_key": "test-secret",
         }
+    )
+
+
+def _write_test_config(path: Path) -> None:
+    path.write_text(
+        """
+openai:
+  api_key_env: OPENAI_API_KEY
+  default_model: gpt-4o
+  extraction_model: gpt-4o
+  compilation_model: gpt-4o
+  temperature: 0.0
+  max_tokens: 4096
+  rate_limit:
+    max_requests_per_minute: 500
+    max_tokens_per_minute: 150000
+  batch:
+    max_batch_size: 50000
+    poll_interval_seconds: 60
+    max_poll_duration_seconds: 86400
+""".strip(),
+        encoding="utf-8",
     )
