@@ -17,7 +17,7 @@ from knowledge_forge.intake.importer import (
     register_document,
 )
 from knowledge_forge.normalize import inspect_normalization, normalize_document
-from knowledge_forge.parse import parse_document, score_parse
+from knowledge_forge.parse import parse_document, score_parse, section_document
 
 
 @click.group(help="Knowledge Forge command line interface.")
@@ -284,6 +284,44 @@ def parse(args: tuple[str, ...], parse_all: bool, parser_name: str, show_quality
     click.echo(f"Parser: {result.parser}")
     click.echo(f"Content: {result.content_path}")
     click.echo(f"Quality score: {result.quality_report.overall_score:.2f}")
+
+
+@cli.command("section")
+@click.argument("doc_id", required=False, type=str)
+@click.option("--all", "section_all", is_flag=True, help="Section every parsed document.")
+def section(doc_id: str | None, section_all: bool) -> None:
+    """Split parsed documents into typed canonical sections."""
+    if section_all and doc_id is not None:
+        raise click.ClickException("pass either a doc_id or --all, not both")
+    if not section_all and doc_id is None:
+        raise click.ClickException("pass a doc_id or use --all")
+
+    data_dir = get_data_dir()
+    if section_all:
+        manifests = list_manifests(data_dir)
+        parsed_doc_ids = [
+            manifest.doc_id
+            for manifest in manifests
+            if (data_dir / "parsed" / manifest.doc_id / "structure.json").exists()
+        ]
+        if not parsed_doc_ids:
+            click.echo("No parsed manifests found.")
+            return
+
+        for manifest_doc_id in parsed_doc_ids:
+            sections = section_document(manifest_doc_id, data_dir=data_dir)
+            click.echo(f"Sectioned {manifest_doc_id} -> {len(sections)} sections")
+        return
+
+    try:
+        sections = section_document(doc_id, data_dir=data_dir)
+    except FileNotFoundError as exc:
+        raise click.ClickException(str(exc)) from exc
+
+    click.echo(f"Sectioned {doc_id}")
+    click.echo(f"Sections: {len(sections)}")
+    if sections:
+        click.echo(f"Output dir: {data_dir / 'sections' / doc_id}")
 
 
 @inference.command("costs")
