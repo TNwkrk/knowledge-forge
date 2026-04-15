@@ -342,7 +342,7 @@ def extract(doc_id: str, section_id: str | None, config_path: Path) -> None:
     try:
         config = InferenceConfig.load(config_path)
         records = extract_document(doc_id, section_id=section_id, config=config, data_dir=get_data_dir())
-    except (FileNotFoundError, ValueError) as exc:
+    except (FileNotFoundError, KeyError, ValueError) as exc:
         raise click.ClickException(str(exc)) from exc
 
     click.echo(f"Extracted {len(records)} record(s) for {doc_id}")
