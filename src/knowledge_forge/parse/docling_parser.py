@@ -129,7 +129,7 @@ def parse_document(
         fallback_attempted=fallback_attempted,
         fallback_reason=fallback_reason,
     )
-    return _load_result_from_disk(doc_id, get_data_dir(data_dir))
+    return selected_result
 
 
 def _parse_with_docling(doc_id: str, *, data_dir: Path | None = None) -> ParseResult:
@@ -289,9 +289,8 @@ def _archive_result(result: ParseResult, parser_name: str) -> Path:
 
 def _promote_result(result: Any) -> None:
     """Copy a parser run into the canonical top-level parse artifact paths."""
-    output_dir = (
-        result.content_path.parent.parent if result.content_path.parent.name == "marker" else result.content_path.parent
-    )
+    artifact_dir = result.content_path.parent
+    output_dir = artifact_dir.parent.parent if artifact_dir.parent.name == "runs" else artifact_dir
     if output_dir.name == "runs":
         output_dir = output_dir.parent
     for artifact_path in (

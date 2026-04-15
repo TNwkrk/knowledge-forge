@@ -11,6 +11,7 @@ import time
 from pathlib import Path
 from typing import Any
 
+from ocrmypdf.pdfinfo import PdfInfo
 from pydantic import BaseModel, ConfigDict, Field
 
 from knowledge_forge.intake.importer import get_data_dir
@@ -105,15 +106,18 @@ def parse_document(
     target_dir = output_dir or resolved_data_dir / "parsed" / doc_id / "runs" / "marker"
     target_dir.mkdir(parents=True, exist_ok=True)
 
+    page_count = _derive_page_count(doc_id=doc_id, data_dir=resolved_data_dir, normalized_path=normalized_path)
     start = time.perf_counter()
-    payload = _extract_with_marker(normalized_path)
+    payload = _extract_with_marker(normalized_path, page_count=page_count)
+    if not payload.pages and page_count > 0:
+        payload = payload.model_copy(update={"pages": _build_fallback_pages(page_count)})
     processing_time = time.perf_counter() - start
 
     structure = StructuredParseArtifact(
         doc_id=doc_id,
         parser=payload.parser,
         parser_version=payload.parser_version,
-        page_count=len(payload.pages),
+        page_count=page_count,
         texts=[
             ParseTextArtifact(
                 item_ref=item.item_ref,
@@ -160,7 +164,7 @@ def parse_document(
         parser_version=payload.parser_version,
         processed_at=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         processing_time_seconds=round(processing_time, 4),
-        page_count=len(payload.pages),
+        page_count=page_count,
         status=payload.status,
         input_path=str(normalized_path),
         input_checksum=compute_sha256(normalized_path),
@@ -193,13 +197,13 @@ def parse_document(
         meta_path=meta_path,
         quality_path=quality_path,
         parser_version=payload.parser_version,
-        page_count=len(payload.pages),
+        page_count=page_count,
         processing_time=round(processing_time, 4),
         quality_report=quality_report,
     )
 
 
-def _extract_with_marker(pdf_path: Path) -> FallbackPayload:
+def _extract_with_marker(pdf_path: Path, *, page_count: int) -> FallbackPayload:
     """Run the Marker CLI and normalize its Markdown output."""
     marker_command = shutil.which("marker_single")
     if marker_command is None:
@@ -230,7 +234,7 @@ def _extract_with_marker(pdf_path: Path) -> FallbackPayload:
         parser_version="cli",
         markdown=markdown,
         texts=_markdown_to_text_items(markdown),
-        pages=[],
+        pages=_build_fallback_pages(page_count),
     )
 
 
@@ -311,34 +315,77 @@ def _build_heading_tree(markdown: str, text_items: list[ParseTextArtifact]) -> l
     ]
 
 
+def _infer_missing_page_numbers(items: list[Any]) -> list[list[int]]:
+    """Infer page numbers when fallback output lacks exact provenance."""
+    resolved: list[list[int] | None] = [list(item.page_numbers) if item.page_numbers else None for item in items]
+
+    last_seen: list[int] | None = None
+    for index, page_numbers in enumerate(resolved):
+        if page_numbers:
+            last_seen = page_numbers
+        elif last_seen:
+            resolved[index] = list(last_seen)
+
+    next_seen: list[int] | None = None
+    for index in range(len(resolved) - 1, -1, -1):
+        page_numbers = resolved[index]
+        if page_numbers:
+            next_seen = page_numbers
+        elif next_seen:
+            resolved[index] = list(next_seen)
+
+    return [list(page_numbers) if page_numbers else [1] for page_numbers in resolved]
+
+
 def _build_page_map(structure: StructuredParseArtifact) -> list[PageMapItem]:
     """Create a content-to-page map from fallback text and table provenance."""
     items: list[PageMapItem] = []
-    for item in structure.texts:
-        if not item.page_numbers:
-            continue
+    text_page_numbers = _infer_missing_page_numbers(structure.texts)
+    for item, page_numbers in zip(structure.texts, text_page_numbers, strict=True):
         items.append(
             PageMapItem(
                 item_ref=item.item_ref,
                 item_type="text",
                 label=item.label,
-                page_numbers=item.page_numbers,
+                page_numbers=page_numbers,
                 text=item.text,
             )
         )
-    for item in structure.tables:
-        if not item.page_numbers:
-            continue
+    table_page_numbers = _infer_missing_page_numbers(structure.tables)
+    for item, page_numbers in zip(structure.tables, table_page_numbers, strict=True):
         items.append(
             PageMapItem(
                 item_ref=item.item_ref,
                 item_type="table",
                 label=item.label,
-                page_numbers=item.page_numbers,
+                page_numbers=page_numbers,
                 table_rows=item.row_count,
             )
         )
     return items
+
+
+def _derive_page_count(*, doc_id: str, data_dir: Path, normalized_path: Path) -> int:
+    """Determine page count from normalization metadata, with PDF introspection fallback."""
+    meta_path = data_dir / "normalized" / f"{doc_id}.meta.json"
+    if meta_path.exists():
+        try:
+            payload = json.loads(meta_path.read_text(encoding="utf-8"))
+            page_count = payload.get("page_count")
+            if isinstance(page_count, int) and page_count > 0:
+                return page_count
+        except (OSError, json.JSONDecodeError):
+            pass
+
+    try:
+        return len(PdfInfo(normalized_path).pages)
+    except Exception:
+        return 0
+
+
+def _build_fallback_pages(page_count: int) -> list[ParsePageArtifact]:
+    """Build conservative page artifacts from an inferred page count."""
+    return [ParsePageArtifact(page_number=index) for index in range(1, page_count + 1)]
 
 
 def _write_json(path: Path, payload: Any) -> None:

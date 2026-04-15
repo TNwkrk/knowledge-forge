@@ -15,6 +15,7 @@ from knowledge_forge.cli import cli
 from knowledge_forge.intake.importer import RegistrationRequest, load_manifest, register_document
 from knowledge_forge.intake.manifest import DocumentStatus
 from knowledge_forge.parse.docling_parser import parse_document
+from knowledge_forge.parse.fallback_parser import FallbackPayload, FallbackTextItem
 from knowledge_forge.parse.quality import ParseQualityThresholds, score_parse
 
 
@@ -564,6 +565,87 @@ def test_parse_document_uses_fallback_when_primary_quality_is_low(monkeypatch, t
     assert meta["candidate_runs"][1]["selected"] is True
     assert (data_dir / "parsed" / doc_id / "runs" / "docling" / "content.md").exists()
     assert (data_dir / "parsed" / doc_id / "runs" / "marker" / "content.md").exists()
+
+
+def test_fallback_parser_derives_page_count_and_page_map_when_marker_lacks_provenance(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    data_dir = tmp_path / "data"
+    source = _write_pdf(tmp_path / "manual.pdf")
+    doc_id = _register_normalized_fixture(source, data_dir)
+    (data_dir / "normalized" / f"{doc_id}.meta.json").write_text(
+        json.dumps(
+            {
+                "output_path": str(data_dir / "normalized" / f"{doc_id}.pdf"),
+                "input_checksum": "f" * 64,
+                "page_count": 2,
+                "ocr_applied": False,
+                "pages_ocrd": 0,
+                "processing_time": 0.1,
+                "page_metadata": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    def fake_extract(pdf_path: Path, *, page_count: int) -> FallbackPayload:
+        assert page_count == 2
+        return FallbackPayload(
+            parser="marker",
+            parser_version="test-marker",
+            markdown="# Title\n\nRecovered fallback content",
+            texts=[FallbackTextItem(item_ref="#/texts/0", label="text", text="Recovered fallback content")],
+            pages=[],
+        )
+
+    monkeypatch.setattr("knowledge_forge.parse.fallback_parser._extract_with_marker", fake_extract)
+
+    from knowledge_forge.parse import fallback_parser
+
+    result = fallback_parser.parse_document(doc_id, data_dir=data_dir)
+    structure = json.loads(result.structure_path.read_text(encoding="utf-8"))
+    page_map = json.loads(result.page_map_path.read_text(encoding="utf-8"))
+    meta = json.loads(result.meta_path.read_text(encoding="utf-8"))
+
+    assert structure["page_count"] == 2
+    assert len(structure["pages"]) == 2
+    assert meta["page_count"] == 2
+    assert page_map["items"]
+    assert all(item["page_numbers"] for item in page_map["items"])
+
+
+def test_promote_result_uses_run_layout_not_parser_name(tmp_path: Path) -> None:
+    parsed_dir = tmp_path / "data" / "parsed" / "sample-doc"
+    run_dir = parsed_dir / "runs" / "alt-parser"
+    run_dir.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "content.md": "# Parsed\n",
+        "structure.json": "{}",
+        "headings.json": "{}",
+        "tables.json": "{}",
+        "page_map.json": "{}",
+        "meta.json": "{}",
+        "quality.json": "{}",
+    }
+    for name, content in payload.items():
+        (run_dir / name).write_text(content, encoding="utf-8")
+
+    from knowledge_forge.parse import docling_parser
+
+    run_result = SimpleNamespace(
+        content_path=run_dir / "content.md",
+        structure_path=run_dir / "structure.json",
+        headings_path=run_dir / "headings.json",
+        tables_path=run_dir / "tables.json",
+        page_map_path=run_dir / "page_map.json",
+        meta_path=run_dir / "meta.json",
+        quality_path=run_dir / "quality.json",
+    )
+    docling_parser._promote_result(run_result)
+
+    for name in payload:
+        assert (parsed_dir / name).read_text(encoding="utf-8") == payload[name]
 
 
 def test_parse_package_imports_without_prefect(monkeypatch) -> None:
