@@ -90,6 +90,11 @@ def extract_section(
     extracted: list[ExtractedRecord] = []
     for record_type in resolved_record_types:
         template = load_prompt_template(record_type)
+        if template.schema_ref != record_type:
+            raise ValueError(
+                "prompt template schema_ref mismatch for "
+                f"record_type '{record_type}': got '{template.schema_ref}'"
+            )
         schema = _record_list_schema(record_type)
         prompt = render_prompt(template, section=section, record_type=record_type)
         result = client.complete(
