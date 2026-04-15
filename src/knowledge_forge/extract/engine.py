@@ -81,7 +81,10 @@ def extract_section(
     data_dir: Path | None = None,
 ) -> list[ExtractedRecord]:
     """Extract typed records from one canonical section."""
-    resolved_record_types = record_types or record_types_for_section_type(section.section_type)
+    if record_types is None:
+        resolved_record_types = record_types_for_section_type(section.section_type)
+    else:
+        resolved_record_types = record_types
     resolved_data_dir = get_data_dir(data_dir)
 
     extracted: list[ExtractedRecord] = []
