@@ -589,7 +589,7 @@ def test_fallback_parser_derives_page_count_and_page_map_when_marker_lacks_prove
         encoding="utf-8",
     )
 
-    def fake_extract(pdf_path: Path, *, page_count: int) -> FallbackPayload:
+    def fake_extract(_pdf_path: Path, *, page_count: int) -> FallbackPayload:
         assert page_count == 2
         return FallbackPayload(
             parser="marker",

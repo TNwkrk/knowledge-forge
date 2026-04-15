@@ -8,8 +8,9 @@ import shutil
 import subprocess
 import tempfile
 import time
+import warnings
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol
 
 from ocrmypdf.pdfinfo import PdfInfo
 from pydantic import BaseModel, ConfigDict, Field
@@ -84,6 +85,10 @@ class FallbackPayload(BaseModel):
     timings: dict[str, Any] = Field(default_factory=dict)
     confidence: dict[str, Any] | None = None
     errors: list[Any] = Field(default_factory=list)
+
+
+class _PageNumberItem(Protocol):
+    page_numbers: list[int]
 
 
 def available_fallback_parser() -> str | None:
@@ -315,8 +320,13 @@ def _build_heading_tree(markdown: str, text_items: list[ParseTextArtifact]) -> l
     ]
 
 
-def _infer_missing_page_numbers(items: list[Any]) -> list[list[int]]:
-    """Infer page numbers when fallback output lacks exact provenance."""
+def _infer_missing_page_numbers(items: list[_PageNumberItem], *, fallback_page_count: int = 1) -> list[list[int]]:
+    """Infer page numbers when fallback output lacks exact provenance.
+
+    Existing page numbers are preserved. Missing values first borrow the nearest known
+    values via forward/backward passes. Any still-unresolved items are then distributed
+    proportionally across the inferred page count based on sequence position.
+    """
     resolved: list[list[int] | None] = [list(item.page_numbers) if item.page_numbers else None for item in items]
 
     last_seen: list[int] | None = None
@@ -334,13 +344,27 @@ def _infer_missing_page_numbers(items: list[Any]) -> list[list[int]]:
         elif next_seen:
             resolved[index] = list(next_seen)
 
-    return [list(page_numbers) if page_numbers else [1] for page_numbers in resolved]
+    if not resolved:
+        return []
+
+    bounded_page_count = max(1, fallback_page_count)
+    inferred: list[list[int]] = []
+    item_count = len(resolved)
+    for index, page_numbers in enumerate(resolved):
+        if page_numbers:
+            inferred.append(list(page_numbers))
+            continue
+        # Distribute unresolved items proportionally across pages by sequence position.
+        # `+ 1` converts the zero-based bucket index into 1-indexed page numbers.
+        estimated_page = min(bounded_page_count, (index * bounded_page_count) // item_count + 1)
+        inferred.append([estimated_page])
+    return inferred
 
 
 def _build_page_map(structure: StructuredParseArtifact) -> list[PageMapItem]:
     """Create a content-to-page map from fallback text and table provenance."""
     items: list[PageMapItem] = []
-    text_page_numbers = _infer_missing_page_numbers(structure.texts)
+    text_page_numbers = _infer_missing_page_numbers(structure.texts, fallback_page_count=structure.page_count)
     for item, page_numbers in zip(structure.texts, text_page_numbers, strict=True):
         items.append(
             PageMapItem(
@@ -351,7 +375,7 @@ def _build_page_map(structure: StructuredParseArtifact) -> list[PageMapItem]:
                 text=item.text,
             )
         )
-    table_page_numbers = _infer_missing_page_numbers(structure.tables)
+    table_page_numbers = _infer_missing_page_numbers(structure.tables, fallback_page_count=structure.page_count)
     for item, page_numbers in zip(structure.tables, table_page_numbers, strict=True):
         items.append(
             PageMapItem(
@@ -379,12 +403,31 @@ def _derive_page_count(*, doc_id: str, data_dir: Path, normalized_path: Path) ->
 
     try:
         return len(PdfInfo(normalized_path).pages)
-    except Exception:
+    except OSError as exc:
+        warnings.warn(
+            f"Failed to read PDF metadata for fallback parse '{doc_id}': {exc}",
+            RuntimeWarning,
+            stacklevel=2,
+        )
+        return 0
+    except ValueError as exc:
+        warnings.warn(
+            f"Failed to parse PDF metadata for fallback parse '{doc_id}': {exc}",
+            RuntimeWarning,
+            stacklevel=2,
+        )
+        return 0
+    except RuntimeError as exc:
+        warnings.warn(
+            f"Failed to inspect PDF metadata for fallback parse '{doc_id}': {exc}",
+            RuntimeWarning,
+            stacklevel=2,
+        )
         return 0
 
 
 def _build_fallback_pages(page_count: int) -> list[ParsePageArtifact]:
-    """Build conservative page artifacts from an inferred page count."""
+    """Build minimal page artifacts when fallback parsing lacks per-page metadata."""
     return [ParsePageArtifact(page_number=index) for index in range(1, page_count + 1)]
 
 
