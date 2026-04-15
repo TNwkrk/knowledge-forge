@@ -1,1 +1,41 @@
 """Extraction package."""
+
+from knowledge_forge.extract.schemas import (
+    JSON_SCHEMA_REGISTRY,
+    SCHEMA_REGISTRY,
+    AlarmDefinition,
+    Applicability,
+    BucketContext,
+    ContradictionCandidate,
+    PartReference,
+    Procedure,
+    ProcedureStep,
+    RevisionNote,
+    SourcePageRange,
+    SpecValue,
+    SupersessionCandidate,
+    TroubleshootingEntry,
+    Warning,
+    get_json_schema,
+    get_schema_model,
+)
+
+__all__ = [
+    "AlarmDefinition",
+    "Applicability",
+    "BucketContext",
+    "ContradictionCandidate",
+    "get_json_schema",
+    "get_schema_model",
+    "JSON_SCHEMA_REGISTRY",
+    "PartReference",
+    "Procedure",
+    "ProcedureStep",
+    "RevisionNote",
+    "SCHEMA_REGISTRY",
+    "SourcePageRange",
+    "SpecValue",
+    "SupersessionCandidate",
+    "TroubleshootingEntry",
+    "Warning",
+]
