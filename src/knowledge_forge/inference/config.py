@@ -40,7 +40,7 @@ class InferenceConfig(BaseModel):
     max_tokens: int = Field(gt=0)
     rate_limit: RateLimitSettings
     batch: BatchSettings
-    pricing: dict[str, ModelPricing]
+    pricing: dict[str, ModelPricing] = Field(default_factory=dict)
     api_key: SecretStr = Field(exclude=True, repr=False)
 
     @model_validator(mode="after")

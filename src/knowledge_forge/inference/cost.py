@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
+from datetime import UTC
 from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -63,7 +64,7 @@ def aggregate_costs(log_dir: Path) -> CostReport:
         _update_totals(report.total, entry.input_tokens, entry.output_tokens, entry.estimated_cost_usd)
         _update_totals(by_model[entry.model], entry.input_tokens, entry.output_tokens, entry.estimated_cost_usd)
         _update_totals(
-            by_date[entry.timestamp.date().isoformat()],
+            by_date[entry.timestamp.astimezone(UTC).date().isoformat()],
             entry.input_tokens,
             entry.output_tokens,
             entry.estimated_cost_usd,

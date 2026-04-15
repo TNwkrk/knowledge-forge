@@ -19,6 +19,7 @@ from knowledge_forge.inference import (
     aggregate_costs,
     estimate_cost,
 )
+from knowledge_forge.inference.logger import iter_log_entries
 
 
 def test_inference_config_loads_yaml_with_env_overrides(tmp_path: Path) -> None:
@@ -95,6 +96,33 @@ openai:
 
     with pytest.raises(ValueError, match="required API key environment variable 'OPENAI_API_KEY' is not set"):
         InferenceConfig.load(config_path, environ={})
+
+
+def test_inference_config_defaults_pricing_when_omitted(tmp_path: Path) -> None:
+    config_path = tmp_path / "inference.yaml"
+    config_path.write_text(
+        """
+openai:
+  api_key_env: OPENAI_API_KEY
+  default_model: gpt-4o
+  extraction_model: gpt-4o
+  compilation_model: gpt-4o
+  temperature: 0.0
+  max_tokens: 4096
+  rate_limit:
+    max_requests_per_minute: 500
+    max_tokens_per_minute: 150000
+  batch:
+    max_batch_size: 50000
+    poll_interval_seconds: 60
+    max_poll_duration_seconds: 86400
+""".strip(),
+        encoding="utf-8",
+    )
+
+    config = InferenceConfig.load(config_path, environ={"OPENAI_API_KEY": "test-secret"})
+
+    assert config.pricing == {}
 
 
 def test_inference_client_initializes_sdk_with_secret_api_key(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -177,6 +205,52 @@ def test_inference_client_completes_direct_request(tmp_path: Path) -> None:
     assert payload["source_section_id"] == "sec-001"
     assert payload["pipeline_run_id"] == "run-001"
     assert payload["estimated_cost_usd"] == estimate_cost("gpt-4o", 12, 4, config.pricing)
+
+
+def test_inference_client_allows_missing_pricing_on_success(tmp_path: Path) -> None:
+    response = SimpleNamespace(
+        id="resp_no_pricing",
+        model="gpt-4o-unknown",
+        output_text="A direct answer",
+        usage=SimpleNamespace(input_tokens=12, output_tokens=4),
+    )
+    sdk_client = SimpleNamespace(
+        responses=SimpleNamespace(create=lambda **_: response),
+    )
+    config = _build_config_without_pricing()
+    logger = InferenceLogger(tmp_path / "logs")
+
+    result = InferenceClient(config, sdk_client=sdk_client, logger=logger).complete(
+        prompt="What is Knowledge Forge?",
+        system="Answer clearly.",
+    )
+
+    assert result.model_used == "gpt-4o-unknown"
+    payload = json.loads(next((tmp_path / "logs").rglob("*.json")).read_text(encoding="utf-8"))
+    assert payload["estimated_cost_usd"] == 0.0
+
+
+def test_inference_client_ignores_logger_oserror(tmp_path: Path) -> None:
+    response = SimpleNamespace(
+        id="resp_log_fail",
+        model="gpt-4o",
+        output_text="A direct answer",
+        usage=SimpleNamespace(input_tokens=2, output_tokens=1),
+    )
+    sdk_client = SimpleNamespace(responses=SimpleNamespace(create=lambda **_: response))
+    logger = InferenceLogger(tmp_path / "logs")
+
+    def fail_log(*_: object, **__: object) -> None:
+        raise OSError("disk full")
+
+    logger.log = fail_log  # type: ignore[method-assign]
+    result = InferenceClient(_build_config(), sdk_client=sdk_client, logger=logger).complete(
+        prompt="What is Knowledge Forge?",
+        system="Answer clearly.",
+    )
+
+    assert result.response_text == "A direct answer"
+    assert not list((tmp_path / "logs").rglob("*.json"))
 
 
 def test_inference_client_validates_schema_bound_response(tmp_path: Path) -> None:
@@ -322,6 +396,57 @@ def test_aggregate_costs_rolls_up_logs(tmp_path: Path) -> None:
     assert report.by_pipeline_run["run-2"].output_tokens == 50
 
 
+def test_aggregate_costs_groups_dates_in_utc(tmp_path: Path) -> None:
+    logger = InferenceLogger(tmp_path / "logs")
+    logger.log(
+        InferenceLogEntry(
+            request_id="req-tz",
+            pipeline_run_id="run-tz",
+            mode="direct",
+            model="gpt-4o",
+            prompt_template="tests/direct",
+            source_doc_id="doc-001",
+            source_section_id="sec-001",
+            input_tokens=10,
+            output_tokens=5,
+            estimated_cost_usd=0.0001,
+            latency_ms=50,
+            status="success",
+            schema_valid=True,
+            timestamp=datetime.fromisoformat("2026-04-16T00:30:00+02:00"),
+        )
+    )
+
+    report = aggregate_costs(tmp_path / "logs")
+
+    assert "2026-04-15" in report.by_date
+
+
+def test_iter_log_entries_skips_malformed_logs(tmp_path: Path) -> None:
+    log_dir = tmp_path / "logs"
+    valid_dir = log_dir / "2026-04-15"
+    valid_dir.mkdir(parents=True, exist_ok=True)
+    (valid_dir / "broken.json").write_text("{broken", encoding="utf-8")
+    (valid_dir / "mismatch.json").write_text(json.dumps({"model": "gpt-4o"}), encoding="utf-8")
+    valid_payload = InferenceLogEntry(
+        request_id="req-valid",
+        mode="direct",
+        model="gpt-4o",
+        input_tokens=1,
+        output_tokens=1,
+        estimated_cost_usd=0.0,
+        latency_ms=1,
+        status="success",
+        timestamp=datetime(2026, 4, 15, 12, 0, tzinfo=UTC),
+    )
+    (valid_dir / "valid.json").write_text(valid_payload.model_dump_json(), encoding="utf-8")
+
+    entries = list(iter_log_entries(log_dir))
+
+    assert len(entries) == 1
+    assert entries[0].request_id == "req-valid"
+
+
 def test_inference_costs_cli_reports_aggregates(tmp_path: Path) -> None:
     logger = InferenceLogger(tmp_path / "logs")
     logger.log(
@@ -387,6 +512,29 @@ def _build_config() -> InferenceConfig:
                     "input_per_million_tokens": 0.4,
                     "output_per_million_tokens": 1.6,
                 },
+            },
+            "api_key": "test-secret",
+        }
+    )
+
+
+def _build_config_without_pricing() -> InferenceConfig:
+    return InferenceConfig.model_validate(
+        {
+            "api_key_env": "OPENAI_API_KEY",
+            "default_model": "gpt-4o",
+            "extraction_model": "gpt-4o",
+            "compilation_model": "gpt-4o",
+            "temperature": 0.0,
+            "max_tokens": 4096,
+            "rate_limit": {
+                "max_requests_per_minute": 500,
+                "max_tokens_per_minute": 150000,
+            },
+            "batch": {
+                "max_batch_size": 50000,
+                "poll_interval_seconds": 60,
+                "max_poll_duration_seconds": 86400,
             },
             "api_key": "test-secret",
         }

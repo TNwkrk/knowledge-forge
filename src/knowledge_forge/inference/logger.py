@@ -7,7 +7,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Iterator
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 
 class InferenceLogEntry(BaseModel):
@@ -57,8 +57,11 @@ def iter_log_entries(log_dir: Path) -> Iterator[InferenceLogEntry]:
         return
 
     for path in sorted(log_dir.rglob("*.json")):
-        payload = json.loads(path.read_text(encoding="utf-8"))
-        yield InferenceLogEntry.model_validate(payload)
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+            yield InferenceLogEntry.model_validate(payload)
+        except (json.JSONDecodeError, ValidationError):
+            continue
 
 
 def utc_now() -> datetime:

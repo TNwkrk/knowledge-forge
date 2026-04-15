@@ -292,15 +292,8 @@ def parse(args: tuple[str, ...], parse_all: bool, parser_name: str, show_quality
     type=click.Path(file_okay=False, dir_okay=True, path_type=Path),
     help="Override the inference log directory.",
 )
-@click.option(
-    "--config",
-    "config_path",
-    type=click.Path(exists=True, dir_okay=False, path_type=Path),
-    help="Inference config path used to resolve pricing defaults.",
-)
-def inference_costs(log_dir: Path | None, config_path: Path | None) -> None:
+def inference_costs(log_dir: Path | None) -> None:
     """Summarize logged inference token usage and estimated costs."""
-    del config_path
     resolved_log_dir = log_dir or (get_data_dir() / "inference_logs")
     report = aggregate_costs(resolved_log_dir)
 

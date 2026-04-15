@@ -118,7 +118,12 @@ class InferenceClient:
                     raise ValueError(f"response did not satisfy schema: {exc.message}") from exc
                 schema_valid = True
 
-            estimated_cost_usd = estimate_cost(model_used, input_tokens, output_tokens, self.config.pricing)
+            estimated_cost_usd = _safe_estimate_cost(
+                model=model_used,
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
+                pricing=self.config.pricing,
+            )
             result = InferenceResult(
                 response_text=response_text,
                 parsed_json=parsed_json,
@@ -128,7 +133,7 @@ class InferenceClient:
                 latency_ms=latency_ms,
                 request_id=request_id,
             )
-            self._logger.log(
+            self._safe_log(
                 InferenceLogEntry(
                     request_id=request_id,
                     batch_id=batch_id,
@@ -161,7 +166,7 @@ class InferenceClient:
                 output_tokens=output_tokens,
                 pricing=self.config.pricing,
             )
-            self._logger.log(
+            self._safe_log(
                 InferenceLogEntry(
                     request_id=request_id,
                     batch_id=batch_id,
@@ -182,6 +187,12 @@ class InferenceClient:
                 )
             )
             raise
+
+    def _safe_log(self, entry: InferenceLogEntry) -> None:
+        try:
+            self._logger.log(entry)
+        except OSError:
+            return
 
 
 def _extract_response_text(response: Any) -> str:
