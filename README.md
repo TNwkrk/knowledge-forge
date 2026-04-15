@@ -26,6 +26,8 @@ work can proceed without guessing repo conventions:
 - `docs/agent-workflow.md` explains the Knowledge Forge to FlowCommander working
   model
 - `docs/evals.md` defines the lightweight fixture and golden-file eval skeleton
+- `config/inference.yaml` now includes model pricing used for request cost
+  estimation and inference log summaries
 
 The setup is intentionally light. Durable behavior lives in repo docs rather
 than hidden local automation.

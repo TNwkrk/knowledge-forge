@@ -9,6 +9,8 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict, Field, SecretStr, model_validator
 from yaml import safe_load
 
+from knowledge_forge.inference.cost import ModelPricing
+
 
 class RateLimitSettings(BaseModel):
     """Rate-limit configuration for future request orchestration."""
@@ -38,6 +40,7 @@ class InferenceConfig(BaseModel):
     max_tokens: int = Field(gt=0)
     rate_limit: RateLimitSettings
     batch: BatchSettings
+    pricing: dict[str, ModelPricing] = Field(default_factory=dict)
     api_key: SecretStr = Field(exclude=True, repr=False)
 
     @model_validator(mode="after")
@@ -78,6 +81,7 @@ def _apply_env_overrides(config: dict[str, Any], environ: dict[str, str]) -> dic
         **config,
         "rate_limit": dict(config.get("rate_limit", {}) or {}),
         "batch": dict(config.get("batch", {}) or {}),
+        "pricing": dict(config.get("pricing", {}) or {}),
     }
 
     scalar_overrides: dict[str, tuple[str, type[Any]]] = {

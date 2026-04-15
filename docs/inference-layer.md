@@ -131,7 +131,9 @@ The system tracks:
 - Per-pipeline-run total cost
 - Running totals across all runs
 
-Cost estimates use configurable per-model pricing. Alerts can be configured for cost thresholds.
+Cost estimates use configurable per-model pricing in `config/inference.yaml`.
+Current local summaries are exposed through `kf inference costs`, which reads the
+structured JSON logs under `data/inference_logs/`.
 
 ### Retry and rate limiting
 

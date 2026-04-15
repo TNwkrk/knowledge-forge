@@ -8,6 +8,7 @@ from pathlib import Path
 import click
 
 from knowledge_forge.bucketing.assigner import bucket_manifest, bucket_unassigned_manifests
+from knowledge_forge.inference import aggregate_costs
 from knowledge_forge.intake.importer import (
     RegistrationRequest,
     get_data_dir,
@@ -27,6 +28,11 @@ def cli() -> None:
 @cli.group(help="Register and inspect source manuals.")
 def intake() -> None:
     """Intake command group."""
+
+
+@cli.group(help="Inspect and operate the inference layer.")
+def inference() -> None:
+    """Inference command group."""
 
 
 @intake.command("register")
@@ -278,6 +284,51 @@ def parse(args: tuple[str, ...], parse_all: bool, parser_name: str, show_quality
     click.echo(f"Parser: {result.parser}")
     click.echo(f"Content: {result.content_path}")
     click.echo(f"Quality score: {result.quality_report.overall_score:.2f}")
+
+
+@inference.command("costs")
+@click.option(
+    "--log-dir",
+    type=click.Path(file_okay=False, dir_okay=True, path_type=Path),
+    help="Override the inference log directory.",
+)
+def inference_costs(log_dir: Path | None) -> None:
+    """Summarize logged inference token usage and estimated costs."""
+    resolved_log_dir = log_dir or (get_data_dir() / "inference_logs")
+    report = aggregate_costs(resolved_log_dir)
+
+    click.echo(f"Log directory: {resolved_log_dir}")
+    click.echo(f"Requests: {report.total.request_count}")
+    click.echo(f"Input tokens: {report.total.input_tokens}")
+    click.echo(f"Output tokens: {report.total.output_tokens}")
+    click.echo(f"Estimated cost (USD): ${report.total.estimated_cost_usd:.6f}")
+
+    if report.by_model:
+        click.echo("BY MODEL")
+        click.echo("MODEL\tREQUESTS\tINPUT_TOKENS\tOUTPUT_TOKENS\tEST_COST_USD")
+        for model, totals in report.by_model.items():
+            click.echo(
+                f"{model}\t{totals.request_count}\t{totals.input_tokens}\t"
+                f"{totals.output_tokens}\t{totals.estimated_cost_usd:.6f}"
+            )
+
+    if report.by_date:
+        click.echo("BY DATE")
+        click.echo("DATE\tREQUESTS\tINPUT_TOKENS\tOUTPUT_TOKENS\tEST_COST_USD")
+        for day, totals in report.by_date.items():
+            click.echo(
+                f"{day}\t{totals.request_count}\t{totals.input_tokens}\t"
+                f"{totals.output_tokens}\t{totals.estimated_cost_usd:.6f}"
+            )
+
+    if report.by_pipeline_run:
+        click.echo("BY PIPELINE RUN")
+        click.echo("PIPELINE_RUN\tREQUESTS\tINPUT_TOKENS\tOUTPUT_TOKENS\tEST_COST_USD")
+        for pipeline_run_id, totals in report.by_pipeline_run.items():
+            click.echo(
+                f"{pipeline_run_id}\t{totals.request_count}\t{totals.input_tokens}\t"
+                f"{totals.output_tokens}\t{totals.estimated_cost_usd:.6f}"
+            )
 
 
 def _normalize_inspect(doc_id: str) -> None:
