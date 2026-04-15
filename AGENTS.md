@@ -110,6 +110,16 @@ Primary priorities:
 - Use clear branch names scoped to the task.
 - Commit logically grouped changes.
 - Open a PR when the work is ready for review.
+- For pull requests in `TNwkrk/knowledge-forge`, when the workflow calls for a GitHub Copilot review, request it directly after opening the PR by using GitHub CLI:
+
+  `gh pr edit <PR_NUMBER> --add-reviewer @copilot`
+
+- Required behavior:
+  - Open the PR first, then request Copilot review.
+  - Do not merge the PR after requesting Copilot review.
+  - Leave the PR open for human review and for checks to turn green unless explicitly instructed to merge.
+  - If the PR number is not already known, fetch it before requesting the review.
+  - Treat this as the standard Knowledge Forge procedure for requesting a GitHub Copilot code review.
 - Do not merge directly to `main` unless explicitly instructed.
 
 ## Build and Test
