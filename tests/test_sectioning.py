@@ -10,7 +10,7 @@ from click.testing import CliRunner
 from knowledge_forge.cli import cli
 from knowledge_forge.intake.importer import RegistrationRequest, register_document
 from knowledge_forge.intake.manifest import DocumentStatus
-from knowledge_forge.parse import section_document
+from knowledge_forge.parse import section_all_documents, section_document
 
 
 def _register_parsed_fixture(data_dir: Path, pdf_path: Path, *, revision: str = "Rev 3") -> str:
@@ -258,6 +258,170 @@ def test_section_document_handles_documents_without_headings(tmp_path: Path) -> 
     assert sections[0].page_range == (1, 2)
 
 
+def test_section_document_ignores_page_headers_as_section_boundaries(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    doc_id = _register_parsed_fixture(data_dir, _write_pdf(tmp_path / "page-headers.pdf"), revision="Rev 6")
+    structure = {
+        "doc_id": doc_id,
+        "parser": "docling",
+        "parser_version": "test",
+        "page_count": 2,
+        "texts": [
+            {"item_ref": "#/texts/0", "label": "title", "text": "Service Notes", "page_numbers": [1]},
+            {"item_ref": "#/texts/1", "label": "page_header", "text": "Service Notes", "page_numbers": [1]},
+            {"item_ref": "#/texts/2", "label": "text", "text": "General intro text.", "page_numbers": [1]},
+            {"item_ref": "#/texts/3", "label": "section_header", "text": "Maintenance", "page_numbers": [2]},
+            {"item_ref": "#/texts/4", "label": "text", "text": "Replace the filter yearly.", "page_numbers": [2]},
+        ],
+        "tables": [],
+        "pages": [
+            {"page_number": 1, "width": 612, "height": 792, "source_ref": "p1"},
+            {"page_number": 2, "width": 612, "height": 792, "source_ref": "p2"},
+        ],
+    }
+    headings = {
+        "doc_id": doc_id,
+        "headings": [
+            {
+                "title": "Service Notes",
+                "label": "title",
+                "level": 1,
+                "page_number": 1,
+                "item_ref": "#/texts/0",
+                "children": [
+                    {
+                        "title": "Maintenance",
+                        "label": "section_header",
+                        "level": 2,
+                        "page_number": 2,
+                        "item_ref": "#/texts/3",
+                        "children": [],
+                    }
+                ],
+            }
+        ],
+    }
+    _write_parsed_artifacts(data_dir, doc_id=doc_id, structure=structure, headings=headings)
+
+    sections = section_document(doc_id, data_dir=data_dir)
+
+    assert [section.title for section in sections] == ["Service Notes", "Maintenance"]
+    assert sections[0].content == "General intro text."
+    assert sections[1].content.endswith("Replace the filter yearly.")
+
+
+def test_section_document_assigns_preamble_tables_before_first_heading(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    doc_id = _register_parsed_fixture(data_dir, _write_pdf(tmp_path / "preamble-table.pdf"), revision="Rev 7")
+    structure = {
+        "doc_id": doc_id,
+        "parser": "docling",
+        "parser_version": "test",
+        "page_count": 2,
+        "texts": [
+            {"item_ref": "#/texts/0", "label": "title", "text": "DC1000 Service Notes", "page_numbers": [1]},
+            {"item_ref": "#/texts/1", "label": "text", "text": "Read this overview first.", "page_numbers": [1]},
+            {"item_ref": "#/texts/2", "label": "section_header", "text": "Installation", "page_numbers": [2]},
+            {"item_ref": "#/texts/3", "label": "text", "text": "Mount as instructed.", "page_numbers": [2]},
+        ],
+        "tables": [
+            {
+                "item_ref": "#/tables/0",
+                "label": "table",
+                "page_numbers": [1],
+                "row_count": 2,
+                "column_count": 2,
+                "data": [["Item", "Value"], ["Torque", "10 Nm"]],
+            }
+        ],
+        "pages": [
+            {"page_number": 1, "width": 612, "height": 792, "source_ref": "p1"},
+            {"page_number": 2, "width": 612, "height": 792, "source_ref": "p2"},
+        ],
+    }
+    headings = {
+        "doc_id": doc_id,
+        "headings": [
+            {
+                "title": "DC1000 Service Notes",
+                "label": "title",
+                "level": 1,
+                "page_number": 1,
+                "item_ref": "#/texts/0",
+                "children": [
+                    {
+                        "title": "Installation",
+                        "label": "section_header",
+                        "level": 2,
+                        "page_number": 2,
+                        "item_ref": "#/texts/2",
+                        "children": [],
+                    }
+                ],
+            }
+        ],
+    }
+    _write_parsed_artifacts(data_dir, doc_id=doc_id, structure=structure, headings=headings)
+
+    sections = section_document(doc_id, data_dir=data_dir)
+
+    assert [section.title for section in sections] == ["DC1000 Service Notes", "Installation"]
+    assert "| Torque | 10 Nm |" in sections[0].content
+    assert "| Torque | 10 Nm |" not in sections[1].content
+
+
+def test_section_all_documents_skips_incomplete_parsed_artifacts(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    complete_doc = _register_parsed_fixture(data_dir, _write_pdf(tmp_path / "complete.pdf"), revision="Rev 8")
+    incomplete_doc = _register_parsed_fixture(data_dir, _write_pdf(tmp_path / "incomplete.pdf"), revision="Rev 9")
+
+    structure = {
+        "doc_id": complete_doc,
+        "parser": "docling",
+        "parser_version": "test",
+        "page_count": 1,
+        "texts": [
+            {"item_ref": "#/texts/0", "label": "title", "text": "Complete", "page_numbers": [1]},
+            {"item_ref": "#/texts/1", "label": "section_header", "text": "Safety", "page_numbers": [1]},
+            {"item_ref": "#/texts/2", "label": "text", "text": "Use PPE.", "page_numbers": [1]},
+        ],
+        "tables": [],
+        "pages": [{"page_number": 1, "width": 612, "height": 792, "source_ref": "p1"}],
+    }
+    headings = {
+        "doc_id": complete_doc,
+        "headings": [
+            {
+                "title": "Complete",
+                "label": "title",
+                "level": 1,
+                "page_number": 1,
+                "item_ref": "#/texts/0",
+                "children": [
+                    {
+                        "title": "Safety",
+                        "label": "section_header",
+                        "level": 2,
+                        "page_number": 1,
+                        "item_ref": "#/texts/1",
+                        "children": [],
+                    }
+                ],
+            }
+        ],
+    }
+    _write_parsed_artifacts(data_dir, doc_id=complete_doc, structure=structure, headings=headings)
+
+    incomplete_parsed_dir = data_dir / "parsed" / incomplete_doc
+    incomplete_parsed_dir.mkdir(parents=True, exist_ok=True)
+    (incomplete_parsed_dir / "structure.json").write_text(json.dumps(structure, indent=2), encoding="utf-8")
+
+    result = section_all_documents(data_dir=data_dir)
+
+    assert len(result) == 1
+    assert [section.doc_id for section in result[0]] == [complete_doc]
+
+
 def test_section_cli_supports_doc_id_and_all(monkeypatch, tmp_path: Path) -> None:
     data_dir = tmp_path / "data"
     first_doc_id = _register_parsed_fixture(data_dir, _write_pdf(tmp_path / "first.pdf"))
@@ -270,6 +434,7 @@ def test_section_cli_supports_doc_id_and_all(monkeypatch, tmp_path: Path) -> Non
         parsed_dir = data_dir / "parsed" / doc_id
         parsed_dir.mkdir(parents=True, exist_ok=True)
         (parsed_dir / "structure.json").write_text("{}", encoding="utf-8")
+        (parsed_dir / "headings.json").write_text("{}", encoding="utf-8")
     runner = CliRunner()
     env = {"KNOWLEDGE_FORGE_DATA_DIR": str(data_dir)}
     calls: list[str] = []

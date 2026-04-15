@@ -114,7 +114,10 @@ def section_all_documents(*, data_dir: Path | None = None) -> list[list[Section]
     resolved_data_dir = get_data_dir(data_dir)
     results: list[list[Section]] = []
     for manifest in list_manifests(resolved_data_dir):
-        if (resolved_data_dir / "parsed" / manifest.doc_id / "structure.json").exists():
+        parsed_dir = resolved_data_dir / "parsed" / manifest.doc_id
+        structure_path = parsed_dir / "structure.json"
+        headings_path = parsed_dir / "headings.json"
+        if structure_path.exists() and headings_path.exists():
             results.append(section_document(manifest.doc_id, data_dir=resolved_data_dir))
     return results
 
@@ -163,7 +166,15 @@ def _draft_sections(
     structure: StructuredParseArtifact,
     heading_events: list[_HeadingEvent],
 ) -> list[_DraftSection]:
-    section_events = [event for event in heading_events if event.label not in {"title", "document_title"}]
+    non_section_heading_labels = {
+        "title",
+        "document_title",
+        "page_header",
+        "page_footer",
+        "running_header",
+        "running_footer",
+    }
+    section_events = [event for event in heading_events if event.label not in non_section_heading_labels]
     drafts: list[_DraftSection] = []
 
     if not section_events:
@@ -183,11 +194,20 @@ def _draft_sections(
         )
         return drafts
 
+    assigned_table_indexes: set[int] = set()
     first_section_index = section_events[0].index
     if first_section_index > 0:
         preamble_items = structure.texts[:first_section_index]
         preamble_title = _document_title(structure) or "Overview"
-        content = _render_section_content(title=None, body_items=preamble_items, tables=[])
+        first_section_page = section_events[0].page_number or _first_page_number(structure.texts[first_section_index:])
+        preamble_tables, table_indexes = _collect_tables_for_section(
+            structure,
+            current_start=1,
+            next_start=first_section_page,
+            assigned_table_indexes=assigned_table_indexes,
+        )
+        assigned_table_indexes.update(table_indexes)
+        content = _render_section_content(title=None, body_items=preamble_items, tables=preamble_tables)
         if content.strip():
             drafts.append(
                 _DraftSection(
@@ -196,11 +216,10 @@ def _draft_sections(
                     parent_item_ref=None,
                     section_type="other",
                     content=content,
-                    page_range=_page_range_for_items(preamble_items, []),
+                    page_range=_page_range_for_items(preamble_items, preamble_tables),
                 )
             )
 
-    assigned_table_indexes: set[int] = set()
     for index, event in enumerate(section_events):
         next_index = section_events[index + 1].index if index + 1 < len(section_events) else len(structure.texts)
         body_items = structure.texts[event.index + 1 : next_index]

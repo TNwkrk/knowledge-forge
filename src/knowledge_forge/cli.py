@@ -303,6 +303,7 @@ def section(doc_id: str | None, section_all: bool) -> None:
             manifest.doc_id
             for manifest in manifests
             if (data_dir / "parsed" / manifest.doc_id / "structure.json").exists()
+            and (data_dir / "parsed" / manifest.doc_id / "headings.json").exists()
         ]
         if not parsed_doc_ids:
             click.echo("No parsed manifests found.")
