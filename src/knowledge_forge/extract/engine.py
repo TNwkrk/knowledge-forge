@@ -97,10 +97,11 @@ def extract_section(
             )
         schema = _record_list_schema(record_type)
         prompt = render_prompt(template, section=section, record_type=record_type)
+        model = template.model or client.config.extraction_model
         result = client.complete(
             prompt=prompt,
             system=template.system,
-            model=template.model,
+            model=model,
             schema=schema,
             prompt_template=f"extraction/{record_type}",
             source_doc_id=section.doc_id,
