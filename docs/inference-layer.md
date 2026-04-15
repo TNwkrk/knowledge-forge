@@ -44,11 +44,24 @@ The OpenAI inference layer is a first-class subsystem of Knowledge Forge. It is 
 The core client wraps the OpenAI Python SDK and provides:
 
 - Centralized configuration (model, temperature, max tokens, etc.)
-- API key management via environment variables or config file
+- API key management via environment variables
 - Request/response type definitions
 - Unified interface for both direct and batch modes
 
 ### Configuration
+
+For local development, keep secrets out of committed files and inject them at
+runtime with Infisical:
+
+```bash
+infisical login
+infisical init
+infisical run -- python -m pytest
+infisical run -- python -m knowledge_forge.cli --help
+```
+
+`OPENAI_API_KEY` remains the canonical environment variable consumed by Python
+code and future inference client wiring.
 
 ```yaml
 # config/inference.yaml

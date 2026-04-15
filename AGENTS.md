@@ -65,6 +65,19 @@ Primary priorities:
 - `docs/evals.md` defines the current lightweight fixtures and golden-file
   skeleton.
 
+## Start Here
+- Before meaningful work, read `AGENTS.md`, `README.md`, and `docs/roadmap.md` first.
+- For publish-boundary or downstream handoff work, also read `docs/publish-contract.md` and `docs/agent-workflow.md` before editing.
+- Keep scope honest to the current roadmap phase. Do not describe unfinished pipeline stages as if they already exist.
+- Use local FlowCommander inspection for comparison and publish preparation, not as permission for direct downstream mutation.
+
+## Task Routing
+- New feature or unclear scope: tighten the problem and phase boundary first, then make a short implementation plan.
+- Bug or regression: investigate the failure against the current repo phase before editing.
+- Roadmap or issue execution: confirm the phase, acceptance signal, and intended artifact shape before coding.
+- Documentation or contract work: prefer updating the existing docs that already own the boundary or structure rule.
+- Cross-repo publish work: stage reviewable artifacts in Knowledge Forge first, then hand off through an explicit PR into FlowCommander `repo-wiki/knowledge/`.
+
 ## Phase Boundaries
 - **Bootstrap**: repo setup, docs, package scaffolding, local tooling, and basic
   validation are in scope. Full parser, extraction, or publish implementations
@@ -149,3 +162,10 @@ Final reports should include:
 - review findings
 - remaining risks
 - PR status or next action
+
+For common task types, keep the finish line explicit:
+- feature work: state the roadmap phase and artifact boundary respected
+- bug work: state the root cause and what validation was real versus not yet available
+- roadmap work: name the issue, acceptance signal, and any out-of-scope later-phase work left untouched
+- docs work: say exactly which docs changed, or `none`
+- cross-repo publish work: state what was staged in Knowledge Forge and what FlowCommander PR/publish step is next

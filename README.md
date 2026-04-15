@@ -69,6 +69,23 @@ source .venv/bin/activate
 pip install -e ".[dev]"
 ```
 
+### Local secrets with Infisical
+
+Keep Python configuration environment-variable based. `OPENAI_API_KEY` should be
+provided by Infisical at command runtime, not by committed files in this repo.
+`.env.example` remains documentation only.
+
+```bash
+infisical login
+infisical init
+infisical run -- python -m pytest
+infisical run -- python -c "import os; print(bool(os.environ['OPENAI_API_KEY']))"
+infisical run -- python -m knowledge_forge.cli --help
+```
+
+If the project is already linked on your machine, `infisical init` may not be
+needed again. The local Infisical link file is ignored by git.
+
 ### Current validation commands
 
 ```bash
@@ -77,6 +94,16 @@ ruff format --check .
 python -m pytest
 python -c "import knowledge_forge"
 python -m knowledge_forge.cli --help
+```
+
+To run these with secrets available:
+
+```bash
+infisical run -- ruff check .
+infisical run -- ruff format --check .
+infisical run -- python -m pytest
+infisical run -- python -c "import knowledge_forge"
+infisical run -- python -m knowledge_forge.cli --help
 ```
 
 ## Core model

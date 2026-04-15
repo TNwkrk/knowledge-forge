@@ -2,6 +2,7 @@
 .env
 .env.*
 !.env.example
+.infisical.json
 
 # Python build and cache artifacts
 __pycache__/
