@@ -12,12 +12,15 @@ from click.testing import CliRunner
 
 from knowledge_forge.cli import cli
 from knowledge_forge.inference import (
+    BatchBuilder,
+    BatchJob,
     InferenceClient,
     InferenceConfig,
     InferenceLogEntry,
     InferenceLogger,
     aggregate_costs,
     estimate_cost,
+    submit_batch,
 )
 from knowledge_forge.inference.logger import iter_log_entries
 
@@ -345,6 +348,165 @@ def test_inference_client_rejects_non_json_schema_response(tmp_path: Path) -> No
     payload = json.loads(next((tmp_path / "logs").rglob("*.json")).read_text(encoding="utf-8"))
     assert payload["request_id"] == "resp_not_json"
     assert payload["estimated_cost_usd"] == estimate_cost("gpt-4o", 1, 1, _build_config().pricing)
+
+
+def test_batch_builder_writes_openai_batch_jsonl_with_multiple_requests(tmp_path: Path) -> None:
+    builder = BatchBuilder(_build_config())
+    builder.add_request(
+        custom_id="req-001",
+        prompt="Summarize startup steps.",
+        system="Return concise JSON.",
+        model="gpt-4o",
+        schema={
+            "type": "object",
+            "properties": {"title": {"type": "string"}},
+            "required": ["title"],
+            "additionalProperties": False,
+        },
+    )
+    builder.add_request(
+        custom_id="req-002",
+        prompt="Summarize shutdown steps.",
+        system="Return concise text.",
+        model="gpt-4o",
+    )
+
+    output_path = builder.build_jsonl(tmp_path / "batch" / "requests.jsonl")
+
+    lines = output_path.read_text(encoding="utf-8").splitlines()
+    assert len(lines) == 2
+    first = json.loads(lines[0])
+    second = json.loads(lines[1])
+
+    assert first["custom_id"] == "req-001"
+    assert first["method"] == "POST"
+    assert first["url"] == "/v1/responses"
+    assert first["body"]["model"] == "gpt-4o"
+    assert first["body"]["input"] == [
+        {"role": "system", "content": "Return concise JSON."},
+        {"role": "user", "content": "Summarize startup steps."},
+    ]
+    assert first["body"]["text"] == {
+        "format": {
+            "type": "json_schema",
+            "name": "knowledge_forge_schema",
+            "schema": {
+                "type": "object",
+                "properties": {"title": {"type": "string"}},
+                "required": ["title"],
+                "additionalProperties": False,
+            },
+            "strict": True,
+        }
+    }
+    assert second["custom_id"] == "req-002"
+    assert "text" not in second["body"]
+    assert builder.request_count == 2
+
+
+def test_batch_builder_enforces_max_batch_size() -> None:
+    config = _build_config()
+    config.batch.max_batch_size = 1
+    builder = BatchBuilder(config)
+    builder.add_request(
+        custom_id="req-001",
+        prompt="First prompt",
+        system="First system",
+        model="gpt-4o",
+    )
+
+    with pytest.raises(ValueError, match="max_batch_size"):
+        builder.add_request(
+            custom_id="req-002",
+            prompt="Second prompt",
+            system="Second system",
+            model="gpt-4o",
+        )
+
+
+def test_batch_builder_rejects_duplicate_custom_ids() -> None:
+    builder = BatchBuilder(_build_config())
+    builder.add_request(
+        custom_id="req-001",
+        prompt="Prompt one",
+        system="System one",
+        model="gpt-4o",
+    )
+
+    with pytest.raises(ValueError, match="duplicate custom_id 'req-001' is not allowed in a batch"):
+        builder.add_request(
+            custom_id="req-001",
+            prompt="Prompt two",
+            system="System two",
+            model="gpt-4o",
+        )
+
+
+def test_batch_builder_rejects_mixed_models_in_same_batch() -> None:
+    builder = BatchBuilder(_build_config())
+    builder.add_request(
+        custom_id="req-001",
+        prompt="Prompt one",
+        system="System one",
+        model="gpt-4o",
+    )
+
+    with pytest.raises(ValueError, match="same model"):
+        builder.add_request(
+            custom_id="req-002",
+            prompt="Prompt two",
+            system="System two",
+            model="gpt-4.1",
+        )
+
+
+def test_submit_batch_uploads_jsonl_and_returns_typed_job(tmp_path: Path) -> None:
+    builder = BatchBuilder(_build_config())
+    builder.add_request(
+        custom_id="req-001",
+        prompt="Summarize startup steps.",
+        system="Return concise text.",
+        model="gpt-4o",
+    )
+    jsonl_path = builder.build_jsonl(tmp_path / "requests.jsonl")
+    captured: dict[str, object] = {}
+
+    def fake_files_create(*, file: object, purpose: str) -> object:
+        captured["purpose"] = purpose
+        captured["file_name"] = getattr(file, "name", None)
+        captured["uploaded_bytes"] = getattr(file, "read")()
+        return SimpleNamespace(id="file-batch-123")
+
+    def fake_batches_create(*, input_file_id: str, endpoint: str, completion_window: str) -> object:
+        captured["input_file_id"] = input_file_id
+        captured["endpoint"] = endpoint
+        captured["completion_window"] = completion_window
+        return SimpleNamespace(
+            id="batch-123",
+            status="validating",
+            created_at=1_765_698_600,
+            input_file_id=input_file_id,
+            request_counts=SimpleNamespace(total=1),
+        )
+
+    sdk_client = SimpleNamespace(
+        files=SimpleNamespace(create=fake_files_create),
+        batches=SimpleNamespace(create=fake_batches_create),
+    )
+
+    job = submit_batch(jsonl_path, _build_config(), sdk_client=sdk_client)
+
+    assert isinstance(job, BatchJob)
+    assert job.batch_id == "batch-123"
+    assert job.status == "validating"
+    assert job.input_file_id == "file-batch-123"
+    assert job.request_count == 1
+    assert job.created_at == datetime.fromtimestamp(1_765_698_600, tz=UTC)
+    assert captured["purpose"] == "batch"
+    assert captured["file_name"] == str(jsonl_path)
+    assert captured["uploaded_bytes"] == jsonl_path.read_bytes()
+    assert captured["endpoint"] == "/v1/responses"
+    assert captured["completion_window"] == "24h"
 
 
 def test_aggregate_costs_rolls_up_logs(tmp_path: Path) -> None:
