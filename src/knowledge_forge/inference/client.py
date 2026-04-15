@@ -75,8 +75,9 @@ class InferenceClient:
             try:
                 parsed_json = json.loads(response_text)
             except json.JSONDecodeError as exc:
+                response_length = len(response_text)
                 snippet = response_text[:MAX_JSON_ERROR_SNIPPET_LENGTH]
-                if len(response_text) > MAX_JSON_ERROR_SNIPPET_LENGTH:
+                if response_length > MAX_JSON_ERROR_SNIPPET_LENGTH:
                     snippet += "..."
                 raise ValueError(f"response was not valid JSON: {exc.msg}. Output snippet: {snippet!r}") from exc
             try:

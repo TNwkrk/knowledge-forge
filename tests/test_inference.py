@@ -50,7 +50,9 @@ openai:
     assert config.api_key.get_secret_value() == "test-secret"
 
 
-def test_inference_config_requires_configured_api_key(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_inference_config_requires_api_key_from_provided_env_only(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     config_path = tmp_path / "inference.yaml"
     config_path.write_text(
         """
