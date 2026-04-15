@@ -70,7 +70,13 @@ class InferenceClient:
         response_text = _extract_response_text(response)
         parsed_json = None
         if schema is not None:
-            parsed_json = json.loads(response_text)
+            try:
+                parsed_json = json.loads(response_text)
+            except json.JSONDecodeError as exc:
+                snippet = response_text[:200]
+                if len(response_text) > 200:
+                    snippet += "..."
+                raise ValueError(f"response was not valid JSON: {exc.msg}. Output snippet: {snippet!r}") from exc
             try:
                 validate(instance=parsed_json, schema=schema)
             except JsonSchemaValidationError as exc:

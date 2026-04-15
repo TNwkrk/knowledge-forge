@@ -42,19 +42,14 @@ class InferenceConfig(BaseModel):
 
     @model_validator(mode="after")
     def validate_api_key(self) -> "InferenceConfig":
-        """Resolve the configured API key environment variable."""
-        if self.api_key.get_secret_value().strip():
-            return self
-
+        """Validate that the configured API key was resolved before model validation."""
         key_name = self.api_key_env.strip()
         if not key_name:
             raise ValueError("api_key_env must not be blank")
 
-        secret = os.environ.get(key_name, "").strip()
-        if not secret:
+        if not self.api_key.get_secret_value().strip():
             raise ValueError(f"required API key environment variable '{key_name}' is not set")
 
-        self.api_key = SecretStr(secret)
         return self
 
     @classmethod
@@ -65,7 +60,7 @@ class InferenceConfig(BaseModel):
         environ: dict[str, str] | None = None,
     ) -> "InferenceConfig":
         """Load inference configuration from YAML plus env var overrides."""
-        resolved_env = environ or os.environ
+        resolved_env = os.environ if environ is None else environ
         path = config_path or Path("config/inference.yaml")
         if not path.exists():
             raise FileNotFoundError(f"inference config not found at '{path}'")

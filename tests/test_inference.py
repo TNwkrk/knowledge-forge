@@ -50,7 +50,7 @@ openai:
     assert config.api_key.get_secret_value() == "test-secret"
 
 
-def test_inference_config_requires_configured_api_key(tmp_path: Path) -> None:
+def test_inference_config_requires_configured_api_key(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     config_path = tmp_path / "inference.yaml"
     config_path.write_text(
         """
@@ -71,6 +71,8 @@ openai:
 """.strip(),
         encoding="utf-8",
     )
+
+    monkeypatch.setenv("OPENAI_API_KEY", "should-not-be-used")
 
     with pytest.raises(ValueError, match="required API key environment variable 'OPENAI_API_KEY' is not set"):
         InferenceConfig.load(config_path, environ={})
@@ -198,6 +200,22 @@ def test_inference_client_rejects_invalid_schema_response() -> None:
     with pytest.raises(ValueError, match="response did not satisfy schema"):
         InferenceClient(_build_config(), sdk_client=sdk_client).complete(
             prompt="Extract a title.",
+            system="Return JSON.",
+            schema=schema,
+        )
+
+
+def test_inference_client_rejects_non_json_schema_response() -> None:
+    schema = {"type": "object"}
+    response = SimpleNamespace(
+        output_text="not json at all",
+        usage=SimpleNamespace(input_tokens=1, output_tokens=1),
+    )
+    sdk_client = SimpleNamespace(responses=SimpleNamespace(create=lambda **_: response))
+
+    with pytest.raises(ValueError, match="response was not valid JSON"):
+        InferenceClient(_build_config(), sdk_client=sdk_client).complete(
+            prompt="Return JSON.",
             system="Return JSON.",
             schema=schema,
         )
