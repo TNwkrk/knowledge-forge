@@ -43,13 +43,19 @@ repo-wiki/
           {model_slug}/
             _index.md                # model overview
     procedures/
-      {procedure_slug}.md            # compiled procedure pages
+      {procedure_slug}.md            # compiled procedure pages (startup, shutdown, PM, seasonal)
     specs/
       {spec_slug}.md                 # compiled spec pages
     troubleshooting/
       {topic_slug}.md                # compiled troubleshooting pages
+    workflow-guidance/
+      {workflow_slug}.md             # SOPs, checklists, seasonal procedures, best practices
+    parts/
+      {parts_slug}.md                # compiled parts and BOM pages
+    safety/
+      {safety_slug}.md               # safety procedures, LOTO guidance, permit references
     source-index/
-      {doc_id}.md                    # one page per source manual
+      {doc_id}.md                    # one page per source document
     _manifests/
       {publish_run_id}.json          # publish manifest for this run
     _sources/
@@ -57,6 +63,13 @@ repo-wiki/
     _publish-log/
       {publish_run_id}.json          # log of what was published and when
 ```
+
+Note: The FlowCommander downstream repo-wiki also uses a digest-type oriented
+taxonomy (`controllers/`, `fault-codes/`, `symptoms/`, `workflow-guidance/`,
+`contradictions/`, `supersessions/`). Knowledge Forge should produce output that
+fits both its own document-centered provenance structure above and the
+FlowCommander digest-type structure. The same extracted record graph can compile
+into both page types.
 
 ## Slug conventions
 

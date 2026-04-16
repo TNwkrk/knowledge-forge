@@ -1,17 +1,43 @@
 # Knowledge Forge
 
-Knowledge Forge is a local-first or self-hosted manual digestion system for turning technical manuals into trustworthy, reviewable knowledge artifacts.
+Knowledge Forge is a local-first or self-hosted technical document digestion system for turning field-service source materials into trustworthy, reviewable knowledge artifacts.
 
 Its job is to:
-- register and classify manuals
+- register and classify technical source documents
 - pre-bucket them before heavy processing
-- normalize and parse technical PDFs
+- normalize and parse technical documents (PDF, DOCX, XLSX, HTML, images, and other supported formats)
 - use the OpenAI API to extract canonical knowledge records
 - use the OpenAI API to compile human-readable wiki pages
 - detect contradiction and supersession candidates
 - publish approved wiki output into the FlowCommander `repo-wiki` by pull request
 
 Knowledge Forge is a separate system from FlowCommander. Hosted Supabase may store approved outputs later for retrieval, but it is **not** responsible for the digestion pipeline.
+
+## Source material scope
+
+Knowledge Forge must support a broader corpus than OEM manuals alone. The full field-service knowledge foundation includes:
+
+### Authoritative technical documents
+- **OEM installation, operation, and service manuals** — the core path today
+- **Datasheets, specifications, selection guides, and certifications**
+- **Fault-code, alarm, indicator, and troubleshooting references**
+- **Service bulletins, revision histories, firmware release notes, supersession notices**
+- **Parts lists, BOMs, and spare-parts catalogs**
+- **Engineering drawings and visual technical documents** (wiring diagrams, schematics, P&IDs)
+
+### Operational and contextual documents
+- **Workflow guidance, SOPs, checklists, and seasonal procedures** (startup, winterization, PM routines)
+- **Safety documents, permits, and hazard-control records** (LOTO sheets, confined-space permits)
+- **Internal best practices, training material, and technician-reference material**
+- **Field forms, inspection templates, and commissioning sheets**
+
+### Future source families (not first-wave extraction targets)
+- Controller, HMI, VFD, and network configuration backups
+- Telemetry, alarm history, trend data, and syslog exports
+- Work orders, service reports, and calibration records
+- Photos, screenshots, videos, audio notes, and transcripts
+
+The first-wave pipeline is built around PDF-centric authoritative documents. Operational documents and future source families should be progressively supported as intake, parsing, and extraction capabilities expand.
 
 ## Codex-ready baseline
 
@@ -115,19 +141,19 @@ This system is **not**:
 
 This system **is**:
 
-`manual intake -> pre-bucket -> OCR/parse -> LLM structured extraction -> LLM wiki compilation -> review -> publish`
+`document intake -> pre-bucket -> OCR/parse -> LLM structured extraction -> LLM wiki compilation -> review -> publish`
 
 The parser recovers structure.
 The OpenAI API converts that structure into canonical records and reviewable wiki output.
 
 ## Why this repo exists
 
-FlowCommander needs a scalable way to digest a large backlog of manuals into knowledge that humans can inspect and that downstream AI systems can trust.
+FlowCommander needs a scalable way to digest a large backlog of technical source materials into knowledge that humans can inspect and that downstream AI systems can trust.
 
 The existing incremental ingestion path is suitable for future uploads, but it is not the right shape for bulk backlog seeding. Knowledge Forge exists to own the heavier content-processing factory:
-- intake and manifesting
+- intake and manifesting for all source document types
 - pre-bucketing
-- OCR and parsing
+- OCR and parsing (expanding beyond PDF to DOCX, XLSX, HTML, images, and more)
 - OpenAI-powered extraction
 - OpenAI-powered wiki compilation
 - contradiction and supersession analysis
@@ -239,13 +265,14 @@ The system should support request logging, retry and repair, token and cost acco
 ## High-level pipeline
 
 ### Stage 0: intake and manifest
-Every manual gets a manifest entry with fields such as:
+Every source document gets a manifest entry with fields such as:
 - source path
 - checksum
 - manufacturer
 - family
 - model applicability
-- document type
+- document type (see source material scope above)
+- document class: `authoritative-technical`, `operational`, or `contextual`
 - revision
 - publication date
 - language
@@ -283,11 +310,15 @@ Split parsed content into meaningful sections such as:
 - configuration
 - startup
 - shutdown
-- maintenance
+- maintenance (preventive, corrective, seasonal)
 - troubleshooting
 - specifications
 - parts
 - revision notes
+- workflow / SOP / checklist
+- inspection / commissioning
+- wiring / drawings / diagrams
+- addenda / bulletins
 
 ### Stage 5: OpenAI structured extraction
 Convert parsed sections into canonical records.
@@ -383,10 +414,13 @@ It should only compare records inside scoped buckets.
 
 Suggested precedence:
 1. service bulletin or addendum
-2. revised manual
+2. revised manual (installation, operation, or service)
 3. original manual
-4. quick start or supplemental guide
-5. non-authoritative material
+4. OEM datasheet or specification sheet
+5. internal SOP or best practice
+6. quick start or supplemental guide
+7. training material or technician reference
+8. non-authoritative material
 
 Compare only when these overlap:
 - manufacturer

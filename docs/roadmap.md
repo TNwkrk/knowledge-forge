@@ -1,5 +1,18 @@
 # Knowledge Forge — Roadmap
 
+## Source material coverage
+
+The pipeline must progressively support the full field-service knowledge corpus,
+not just OEM manuals. See `README.md § Source material scope` for the complete
+taxonomy. Phases below should be read with that broader scope in mind:
+
+- **Phases 1–4** are format-agnostic in design but PDF-first in current implementation.
+- **Phase 6** extraction schemas currently target manual-style records. Additional
+  schemas for operational documents (SOPs, checklists, safety/permit records,
+  inspection forms) should be added as those source families enter the pipeline.
+- **Phase 10** first-corpus onboarding should include at least one non-manual
+  source family (e.g. an SOP or checklist) to validate broader intake coverage.
+
 ## Phased implementation plan
 
 Each phase maps to one or more GitHub epics. Issues within each phase are sequenced so they can be worked one at a time without guessing context.
@@ -37,7 +50,7 @@ Exit criteria: `pip install -e .` works, CI passes on empty test suite, data dir
 
 **Epic B**
 
-Goal: Manuals can be registered, checksummed, and assigned to buckets before any heavy processing.
+Goal: Source documents can be registered, checksummed, and assigned to buckets before any heavy processing. The manifest schema supports the full document type vocabulary (manuals, bulletins, SOPs, checklists, datasheets, drawings, field forms, training material, and others).
 
 | Issue | Summary |
 |---|---|
@@ -46,7 +59,7 @@ Goal: Manuals can be registered, checksummed, and assigned to buckets before any
 | B-3 | Define bucket taxonomy and implement automatic assignment |
 | B-4 | Add checksum deduplication and intake rerun safety |
 
-Exit criteria: A PDF can be registered, manifested, bucketed, and re-registered without duplication.
+Exit criteria: A PDF can be registered, manifested, bucketed, and re-registered without duplication. The manifest schema supports `document_type` values beyond just manuals.
 
 ---
 
@@ -78,7 +91,7 @@ Goal: Docling (primary) and a fallback parser produce structured parse artifacts
 | D-3 | Add fallback parser lane (MinerU or Marker) |
 | D-4 | Implement canonical sectioning logic |
 
-Exit criteria: A normalized PDF produces markdown, structured JSON, heading tree, tables, page map, and quality score. Sections are typed and bounded.
+Exit criteria: A normalized PDF produces markdown, structured JSON, heading tree, tables, page map, and quality score. Sections are typed and bounded. Section types include safety, installation, configuration, startup, shutdown, maintenance, troubleshooting, specifications, parts, revision notes, workflow/SOP/checklist, inspection/commissioning, wiring/drawings/diagrams, and addenda/bulletins.
 
 ---
 
@@ -169,7 +182,7 @@ Exit criteria: Overlapping records within a bucket produce contradiction and sup
 
 **Epic J**
 
-Goal: Quality tooling exists and the first real manufacturer bucket runs end-to-end.
+Goal: Quality tooling exists and the first real manufacturer bucket runs end-to-end. At least one non-manual source family (SOP, checklist, or field form) is also tested.
 
 | Issue | Summary |
 |---|---|
@@ -177,7 +190,7 @@ Goal: Quality tooling exists and the first real manufacturer bucket runs end-to-
 | J-2 | Build extraction evaluation harness |
 | J-3 | Onboard first real manufacturer bucket end-to-end |
 
-Exit criteria: Parser and extraction quality are measurable. A real manufacturer bucket produces a publish-ready PR into FlowCommander.
+Exit criteria: Parser and extraction quality are measurable. A real manufacturer bucket produces a publish-ready PR into FlowCommander. Evaluation fixtures include at least one non-manual document type.
 
 ---
 

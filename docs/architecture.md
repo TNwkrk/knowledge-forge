@@ -33,7 +33,8 @@ Every manual entering the system gets a manifest record:
 | `manufacturer` | E.g. Honeywell, Grundfos |
 | `family` | Product family or series |
 | `model_applicability` | Specific models covered |
-| `document_type` | Service manual, bulletin, quick start, etc. |
+| `document_type` | Service manual, installation manual, bulletin, datasheet, parts list, SOP, checklist, drawing, field form, training material, etc. |
+| `document_class` | `authoritative-technical`, `operational`, or `contextual` |
 | `revision` | Document revision identifier |
 | `publication_date` | When the document was published |
 | `language` | ISO 639-1 |
@@ -89,8 +90,10 @@ The selected parser's artifacts remain at the top-level document paths, while pa
 Parsed content is split into typed sections:
 
 - safety, installation, configuration, startup, shutdown
-- maintenance, troubleshooting, specifications, parts
-- revision notes
+- maintenance (preventive, corrective, seasonal), troubleshooting, specifications, parts
+- revision notes, addenda, bulletins
+- workflow / SOP / checklist, inspection / commissioning
+- wiring / drawings / diagrams
 
 Each section becomes a unit of extraction. Section boundaries and types are recorded with their source page ranges.
 

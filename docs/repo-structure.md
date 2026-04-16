@@ -244,7 +244,7 @@ needs them and the expected output shape is stable enough to review.
 
 ### Naming conventions
 
-- **doc_id**: Derived from manifest fields. Format: `{manufacturer}-{family}-{doc_type}-{revision}` slugified. Example: `honeywell-dc1000-service-manual-rev3`
+- **doc_id**: Derived from manifest fields. Format: `{manufacturer}-{family}-{doc_type}-{revision}` slugified. Example: `honeywell-dc1000-service-manual-rev3`. The `doc_type` segment reflects the full document type vocabulary (service-manual, installation-manual, bulletin, datasheet, parts-list, sop, checklist, drawing, field-form, training-material, etc.)
 - **section_id**: `{doc_id}--{section_type}--{sequence}`. Example: `honeywell-dc1000-service-manual-rev3--maintenance--003`
 - **record_id**: `{section_id}--{record_type}--{sequence}`. Example: `honeywell-dc1000-service-manual-rev3--maintenance--003--procedure--001`
 - **publish_run_id**: `kf-{YYYYMMDD}-{sequence}`. Example: `kf-20240115-001`
