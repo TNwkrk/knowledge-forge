@@ -14,7 +14,7 @@ name: CI
 
 jobs:
   preflight:
-    if: ${{ github.event_name == 'pull_request' }}
+    if: ${{ github.event.pull_request.draft }}
     runs-on: ubuntu-latest
 
     steps:
