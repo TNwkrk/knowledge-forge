@@ -67,11 +67,7 @@ def compile() -> None:
 @click.option(
     "--document-type",
     type=str,
-    help=(
-        "Document type. Canonical examples: "
-        + ", ".join(CANONICAL_DOCUMENT_TYPE_VALUES[:8])
-        + ", ..."
-    ),
+    help=("Document type. Canonical examples: " + ", ".join(CANONICAL_DOCUMENT_TYPE_VALUES[:8]) + ", ..."),
 )
 @click.option("--revision", type=str, help="Document revision identifier.")
 @click.option(

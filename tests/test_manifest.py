@@ -82,6 +82,35 @@ def test_document_validation_rejects_invalid_language() -> None:
         )
 
 
+def test_document_validation_rejects_invalid_document_class() -> None:
+    with pytest.raises(ValueError, match="document_class must be one of"):
+        Document(
+            source_path=Path("/tmp/manual.pdf"),
+            checksum="b" * 64,
+            manufacturer="Honeywell",
+            family="DC1000",
+            model_applicability=["DC1000"],
+            document_class="not-a-class",
+            document_type="Service Manual",
+            revision="Rev 3",
+            language="en",
+        )
+
+
+def test_document_validation_rejects_invalid_document_type() -> None:
+    with pytest.raises(ValueError, match="document_type must be one of"):
+        Document(
+            source_path=Path("/tmp/manual.pdf"),
+            checksum="b" * 64,
+            manufacturer="Honeywell",
+            family="DC1000",
+            model_applicability=["DC1000"],
+            document_type="Not A Real Type",
+            revision="Rev 3",
+            language="en",
+        )
+
+
 def test_manifest_round_trip_yaml() -> None:
     manifest = build_manifest_entry()
 

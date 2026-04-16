@@ -138,8 +138,7 @@ def _normalized_allowed_values(values: Iterable[str]) -> set[str]:
 
 
 ALLOWED_DOCUMENT_TYPE_VALUES: frozenset[str] = frozenset(
-    _normalized_allowed_values(CANONICAL_DOCUMENT_TYPE_VALUES)
-    | _normalized_allowed_values(LEGACY_DOCUMENT_TYPE_VALUES)
+    _normalized_allowed_values(CANONICAL_DOCUMENT_TYPE_VALUES) | _normalized_allowed_values(LEGACY_DOCUMENT_TYPE_VALUES)
 )
 
 
