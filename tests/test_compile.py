@@ -485,10 +485,7 @@ def test_compile_topic_page_renders_citations_applicability_notes_and_conflicts(
         data_dir=data_dir,
     )
     rendered_specs = specs_page.render()
-    assert (
-        "Operating pressure: 15 PSI (startup mode) "
-        "[Source: honeywell-dc1000-sop-rev-3, pp.30-31]" in rendered_specs
-    )
+    assert "Operating pressure: 15 PSI (startup mode) [Source: honeywell-dc1000-sop-rev-3, pp.30-31]" in rendered_specs
 
 
 def test_render_contradiction_notes_generates_bucket_summary_page_and_cli(tmp_path: Path) -> None:
@@ -599,6 +596,8 @@ def test_render_contradiction_notes_generates_bucket_summary_page_and_cli(tmp_pa
     assert "(Service Manual, p.18, revised manual, level 2)" in rendered
     assert "(SOP, p.21, internal SOP or best practice, level 5)" in rendered
     assert "Recommended resolution: Prefer `honeywell-dc1000-service-manual-rev-3`" in rendered
+    assert "analysis_version: contradiction-analysis@v1" in rendered
+    assert "contradiction-analysis@v1" in rendered  # always in extraction_version
 
     runner = CliRunner()
     env = {"KNOWLEDGE_FORGE_DATA_DIR": str(data_dir)}

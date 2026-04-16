@@ -10,7 +10,11 @@ from pathlib import Path
 
 from yaml import safe_load
 
-from knowledge_forge.compile.contradiction_notes import render_inline_contradiction_notes
+from knowledge_forge.compile.contradiction_notes import (
+    ContradictionNoteEntry,
+    build_note_entries,
+    render_inline_contradiction_notes,
+)
 from knowledge_forge.compile.source_pages import (
     GENERATED_BY,
     PUBLISH_RUN_PLACEHOLDER,
@@ -95,6 +99,7 @@ def compile_topic_page(
     *,
     client: InferenceClient,
     data_dir: Path | None = None,
+    contradiction_entries: list[ContradictionNoteEntry] | None = None,
 ) -> CompiledPage:
     """Compile one bucket/topic Markdown page from extracted records."""
     if topic not in TOPIC_TITLES:
@@ -144,6 +149,7 @@ def compile_topic_page(
         llm_markdown=result.response_text,
         records=topic_records,
         data_dir=resolved_data_dir,
+        contradiction_entries=contradiction_entries,
     )
     page = CompiledPage(
         output_path=output_path,
@@ -171,6 +177,7 @@ def compile_bucket_topic_pages(
     """Compile every supported topic page for one bucket."""
     resolved_data_dir = get_data_dir(data_dir)
     topic_records = _load_bucket_records(bucket_id, data_dir=resolved_data_dir)
+    bucket_contradiction_entries = build_note_entries(bucket_id, data_dir=resolved_data_dir)
     pages: list[CompiledPage] = []
     for topic in TOPIC_TITLES:
         records_for_topic = [entry for entry in topic_records if classify_topic(entry) == topic]
@@ -183,6 +190,7 @@ def compile_bucket_topic_pages(
                 records_for_topic,
                 client=client,
                 data_dir=resolved_data_dir,
+                contradiction_entries=bucket_contradiction_entries,
             )
         )
     return pages
@@ -302,6 +310,7 @@ def _render_content(
     llm_markdown: str,
     records: list[TopicRecord],
     data_dir: Path,
+    contradiction_entries: list[ContradictionNoteEntry] | None = None,
 ) -> str:
     summary_lines = _normalize_llm_markdown(llm_markdown)
     cited_claims = _render_claims(records)
@@ -310,6 +319,7 @@ def _render_content(
         bucket_id,
         record_ids={entry.record_path.stem for entry in records},
         data_dir=data_dir,
+        entries=contradiction_entries,
     )
 
     lines = [f"# {TOPIC_TITLES[topic]}", ""]

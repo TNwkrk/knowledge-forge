@@ -12,6 +12,7 @@ from knowledge_forge.publish.manifest import PublishManifest
 
 ALLOWED_TARGET_DIRECTORIES = frozenset(
     {
+        "analysis",
         "manufacturers",
         "procedures",
         "specs",

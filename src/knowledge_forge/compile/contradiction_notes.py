@@ -15,7 +15,7 @@ from knowledge_forge.compile.source_pages import (
 from knowledge_forge.extract.contradiction import (
     ANALYSIS_VERSION,
     ComparableClaim,
-    _load_comparable_claims,
+    ContradictionAnalysisReport,
     analyze_contradictions,
 )
 from knowledge_forge.intake.importer import get_data_dir, list_manifests
@@ -47,29 +47,16 @@ class ContradictionNoteEntry:
 def render_contradiction_notes(bucket_id: str, *, data_dir: Path | None = None) -> list[CompiledPage]:
     """Compile one standalone contradiction summary page for a bucket."""
     resolved_data_dir = get_data_dir(data_dir)
-    entries = _build_note_entries(bucket_id, data_dir=resolved_data_dir)
+    report = analyze_contradictions(bucket_id, data_dir=resolved_data_dir)
+    entries = _build_note_entries(report)
     generated_at = _utc_timestamp()
 
-    claims = {
-        claim.record_id: claim
-        for claim in _load_comparable_claims(bucket_id, data_dir=resolved_data_dir)
-    }
     source_documents = _build_source_documents(bucket_id, data_dir=resolved_data_dir)
     extraction_versions = sorted(
-        {
-            claim.record.extraction_version
-            for entry in entries
-            for claim in (entry.left, entry.right)
-        }
-        or {ANALYSIS_VERSION}
+        {claim.record.extraction_version for entry in entries for claim in (entry.left, entry.right)}
+        | {ANALYSIS_VERSION}
     )
-    parser_versions = sorted(
-        {
-            claim.record.parser_version
-            for entry in entries
-            for claim in (entry.left, entry.right)
-        }
-    )
+    parser_versions = sorted({claim.record.parser_version for entry in entries for claim in (entry.left, entry.right)})
 
     output_path = resolved_data_dir / "compiled" / "contradiction-notes" / f"{slugify(bucket_id)}.md"
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -80,6 +67,7 @@ def render_contradiction_notes(bucket_id: str, *, data_dir: Path | None = None) 
         "source_documents": source_documents,
         "generated_at": generated_at,
         "extraction_version": ", ".join(extraction_versions),
+        "analysis_version": ANALYSIS_VERSION,
         "compilation_version": COMPILATION_VERSION,
         "bucket_id": bucket_id,
         "status": "compiled",
@@ -96,7 +84,7 @@ def render_contradiction_notes(bucket_id: str, *, data_dir: Path | None = None) 
             record_counts={
                 "contradiction_candidate": len(entries),
                 "source_documents": len(source_documents),
-                "analyzed_claims": len(claims),
+                "analyzed_claims": len(report.claims),
             },
             review_flag_count=0,
         ),
@@ -114,16 +102,31 @@ def compile_all_contradiction_notes(*, data_dir: Path | None = None) -> list[Com
     return pages
 
 
+def build_note_entries(bucket_id: str, *, data_dir: Path | None = None) -> list[ContradictionNoteEntry]:
+    """Build contradiction note entries for one bucket (public API for batch callers)."""
+    resolved_data_dir = get_data_dir(data_dir)
+    report = analyze_contradictions(bucket_id, data_dir=resolved_data_dir)
+    return _build_note_entries(report)
+
+
 def render_inline_contradiction_notes(
     bucket_id: str,
     *,
     record_ids: set[str],
     data_dir: Path | None = None,
+    entries: list[ContradictionNoteEntry] | None = None,
 ) -> list[str]:
-    """Render inline contradiction callouts for one compiled topic page."""
-    resolved_data_dir = get_data_dir(data_dir)
+    """Render inline contradiction callouts for one compiled topic page.
+
+    Pass ``entries`` to reuse pre-computed entries for the bucket and avoid
+    running contradiction analysis more than once per bucket compile run.
+    """
+    if entries is None:
+        resolved_data_dir = get_data_dir(data_dir)
+        report = analyze_contradictions(bucket_id, data_dir=resolved_data_dir)
+        entries = _build_note_entries(report)
     lines: list[str] = []
-    for entry in _build_note_entries(bucket_id, data_dir=resolved_data_dir):
+    for entry in entries:
         candidate_ids = (entry.left.record_id, entry.right.record_id)
         if not any(_record_matches(record_id, record_ids) for record_id in candidate_ids):
             continue
@@ -133,12 +136,8 @@ def render_inline_contradiction_notes(
     return lines
 
 
-def _build_note_entries(bucket_id: str, *, data_dir: Path) -> list[ContradictionNoteEntry]:
-    report = analyze_contradictions(bucket_id, data_dir=data_dir)
-    claims_by_id = {
-        claim.record_id: claim
-        for claim in _load_comparable_claims(bucket_id, data_dir=data_dir)
-    }
+def _build_note_entries(report: ContradictionAnalysisReport) -> list[ContradictionNoteEntry]:
+    claims_by_id = {claim.record_id: claim for claim in report.claims}
     supersession_by_pair = {
         frozenset((candidate.superseding_record_id, candidate.superseded_record_id)): candidate
         for candidate in report.supersessions
@@ -157,12 +156,12 @@ def _build_note_entries(bucket_id: str, *, data_dir: Path) -> list[Contradiction
                 rationale=candidate.rationale,
                 left=left,
                 right=right,
-                supersession_precedence_basis=(
-                    supersession.precedence_basis if supersession is not None else None
+                supersession_precedence_basis=(supersession.precedence_basis if supersession is not None else None),
+                recommended_resolution=_recommended_resolution(
+                    left,
+                    right,
+                    supersession_precedence_basis=(supersession.precedence_basis if supersession is not None else None),
                 ),
-                recommended_resolution=_recommended_resolution(left, right, supersession_precedence_basis=(
-                    supersession.precedence_basis if supersession is not None else None
-                )),
             )
         )
     return sorted(entries, key=lambda entry: entry.key)
