@@ -594,9 +594,15 @@ def publish_validate(publish_run_id: str) -> None:
 
 
 @publish.command("log")
-def publish_log() -> None:
+@click.option(
+    "--validate",
+    is_flag=True,
+    default=False,
+    help="Run full publish-contract validation for each run (slower; reports 'valid'/'invalid' instead of 'ready').",
+)
+def publish_log(validate: bool) -> None:
     """List staged publish runs and their current validation status."""
-    runs = list_publish_runs(get_data_dir())
+    runs = list_publish_runs(get_data_dir(), validate=validate)
     if not runs:
         click.echo("No publish runs found.")
         return

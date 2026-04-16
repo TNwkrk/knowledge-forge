@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+import json
 from collections.abc import Iterable
 from datetime import datetime, timezone
 from pathlib import Path
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, ValidationError
 
 from knowledge_forge import __version__
 from knowledge_forge.intake.importer import get_data_dir
@@ -76,10 +77,15 @@ def load_publish_manifest(stage_dir: Path, publish_run_id: str) -> PublishManife
     return PublishManifest.model_validate_json(manifest_path.read_text(encoding="utf-8"))
 
 
-def list_publish_runs(data_dir: Path | None = None) -> list[PublishRunSummary]:
-    """List staged publish runs and their validation status."""
-    from knowledge_forge.publish.validate import validate_publish_output
+def list_publish_runs(data_dir: Path | None = None, *, validate: bool = False) -> list[PublishRunSummary]:
+    """List staged publish runs and their validation status.
 
+    When *validate* is False (the default) only the manifest is read; status is
+    ``"ready"`` when the manifest parses and the embedded ``publish_run_id``
+    matches the directory name.  Pass ``validate=True`` to run the full
+    :func:`~knowledge_forge.publish.validate.validate_publish_output` check and
+    receive ``"valid"``/``"invalid"`` statuses instead.
+    """
     resolved_data_dir = get_data_dir(data_dir)
     publish_root = resolved_data_dir / "publish"
     if not publish_root.exists():
@@ -100,23 +106,42 @@ def list_publish_runs(data_dir: Path | None = None) -> list[PublishRunSummary]:
 
         try:
             manifest = PublishManifest.model_validate_json(manifest_path.read_text(encoding="utf-8"))
-        except Exception:
+        except (OSError, json.JSONDecodeError, ValidationError) as exc:
             runs.append(
                 PublishRunSummary(
                     publish_run_id=stage_dir.name,
-                    status="invalid-manifest",
+                    status=f"invalid-manifest ({type(exc).__name__})",
                     stage_dir=stage_dir,
                     manifest_path=manifest_path,
                 )
             )
             continue
 
-        report = validate_publish_output(stage_dir)
+        if manifest.publish_run_id != stage_dir.name:
+            runs.append(
+                PublishRunSummary(
+                    publish_run_id=stage_dir.name,
+                    generated_at=manifest.generated_at,
+                    status="id-mismatch",
+                    stage_dir=stage_dir,
+                    manifest_path=manifest_path,
+                )
+            )
+            continue
+
+        if validate:
+            from knowledge_forge.publish.validate import validate_publish_output
+
+            report = validate_publish_output(stage_dir)
+            status = "valid" if report.valid else "invalid"
+        else:
+            status = "ready"
+
         runs.append(
             PublishRunSummary(
-                publish_run_id=manifest.publish_run_id,
+                publish_run_id=stage_dir.name,
                 generated_at=manifest.generated_at,
-                status="valid" if report.valid else "invalid",
+                status=status,
                 stage_dir=stage_dir,
                 manifest_path=manifest_path,
             )

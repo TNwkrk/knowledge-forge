@@ -371,7 +371,7 @@ def test_publish_validate_cli_reports_success_and_failure(tmp_path: Path) -> Non
     assert "publish validation failed" in failure.output
 
 
-def test_list_publish_runs_reports_valid_and_missing_manifest_runs(tmp_path: Path) -> None:
+def test_list_publish_runs_reports_ready_and_missing_manifest_runs(tmp_path: Path) -> None:
     data_dir = tmp_path / "data"
     valid_stage_dir = data_dir / "publish" / "kf-20260416-010"
     missing_stage_dir = data_dir / "publish" / "kf-20260416-011"
@@ -386,8 +386,63 @@ def test_list_publish_runs_reports_valid_and_missing_manifest_runs(tmp_path: Pat
     runs = list_publish_runs(data_dir)
 
     assert [run.publish_run_id for run in runs] == ["kf-20260416-010", "kf-20260416-011"]
+    assert runs[0].status == "ready"
+    assert runs[1].status == "missing-manifest"
+
+
+def test_list_publish_runs_validate_flag_returns_valid_or_invalid(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    valid_stage_dir = data_dir / "publish" / "kf-20260416-010"
+    missing_stage_dir = data_dir / "publish" / "kf-20260416-011"
+
+    _write_markdown(
+        valid_stage_dir / "repo-wiki" / "knowledge" / "source-index" / "doc-1.md",
+        _frontmatter(doc_id="doc-1", source_documents=[{"doc_id": "doc-1"}]),
+    )
+    _write_manifest(valid_stage_dir, "kf-20260416-010", files_written=["source-index/doc-1.md"])
+    missing_stage_dir.mkdir(parents=True, exist_ok=True)
+
+    runs = list_publish_runs(data_dir, validate=True)
+
+    assert [run.publish_run_id for run in runs] == ["kf-20260416-010", "kf-20260416-011"]
     assert runs[0].status == "valid"
     assert runs[1].status == "missing-manifest"
+
+
+def test_list_publish_runs_id_mismatch_when_manifest_run_id_differs(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    stage_dir = data_dir / "publish" / "kf-20260416-010"
+
+    _write_markdown(
+        stage_dir / "repo-wiki" / "knowledge" / "source-index" / "doc-1.md",
+        _frontmatter(doc_id="doc-1", source_documents=[{"doc_id": "doc-1"}]),
+    )
+    # Write a manifest file named after the directory but with a mismatched publish_run_id inside
+    manifest_path = stage_dir / "repo-wiki" / "knowledge" / "_manifests" / "kf-20260416-010.json"
+    manifest_path.parent.mkdir(parents=True, exist_ok=True)
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "publish_run_id": "kf-20260416-WRONG",
+                "generated_at": "2026-04-16T17:30:00Z",
+                "knowledge_forge_version": "0.1.0",
+                "source_documents": ["doc-1"],
+                "buckets": [],
+                "files_written": ["source-index/doc-1.md"],
+                "files_updated": [],
+                "files_removed": [],
+                "extraction_version": "extract-v1",
+                "compilation_version": "compile-v1",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    runs = list_publish_runs(data_dir)
+
+    assert len(runs) == 1
+    assert runs[0].publish_run_id == "kf-20260416-010"
+    assert runs[0].status == "id-mismatch"
 
 
 def test_publish_log_and_inspect_cli_report_staged_history(tmp_path: Path) -> None:
@@ -409,10 +464,16 @@ def test_publish_log_and_inspect_cli_report_staged_history(tmp_path: Path) -> No
     runner = CliRunner()
     env = {"KNOWLEDGE_FORGE_DATA_DIR": str(data_dir)}
 
+    # Default (no --validate): status is "ready"
     log_result = runner.invoke(cli, ["publish", "log"], env=env)
     assert log_result.exit_code == 0
     assert "RUN ID\tSTATUS\tGENERATED AT\tSTAGE DIR" in log_result.output
-    assert "kf-20260416-012\tvalid" in log_result.output
+    assert "kf-20260416-012\tready" in log_result.output
+
+    # With --validate: status is "valid"
+    log_validate_result = runner.invoke(cli, ["publish", "log", "--validate"], env=env)
+    assert log_validate_result.exit_code == 0
+    assert "kf-20260416-012\tvalid" in log_validate_result.output
 
     inspect_result = runner.invoke(cli, ["publish", "inspect", "kf-20260416-012"], env=env)
     assert inspect_result.exit_code == 0
