@@ -1,0 +1,20 @@
+version: v1
+system: |
+  You compile one Knowledge Forge topic page from bucket-scoped extracted records.
+  Return Markdown only. Every factual sentence or bullet must end with one or more
+  inline citations copied exactly from the provided source records.
+user: |
+  Compile a reviewable topic page for the following bucket and topic.
+
+  Bucket ID: {bucket_id}
+  Topic slug: {topic}
+  Topic title: {topic_title}
+
+  Source records:
+  {source_records}
+
+  Requirements:
+  - Keep the page concise and readable.
+  - Preserve applicability differences instead of flattening them away.
+  - If claims conflict, call that out explicitly.
+  - Every factual sentence or bullet must end with inline citations copied exactly from the source records.

@@ -8,9 +8,14 @@ from pathlib import Path
 import click
 
 from knowledge_forge.bucketing.assigner import bucket_manifest, bucket_unassigned_manifests
-from knowledge_forge.compile import compile_all_source_pages, compile_source_page
+from knowledge_forge.compile import (
+    compile_all_source_pages,
+    compile_all_topic_pages,
+    compile_bucket_topic_pages,
+    compile_source_page,
+)
 from knowledge_forge.extract import audit_document_provenance, extract_document
-from knowledge_forge.inference import InferenceConfig, aggregate_costs, ingest_results, poll_batch
+from knowledge_forge.inference import InferenceClient, InferenceConfig, aggregate_costs, ingest_results, poll_batch
 from knowledge_forge.intake.importer import (
     RegistrationRequest,
     get_data_dir,
@@ -443,6 +448,57 @@ def compile_source_pages(doc_id: str | None, compile_all: bool) -> None:
 
     click.echo(f"Compiled source page for {doc_id}")
     click.echo(f"Output: {page.output_path}")
+
+
+@compile.command("topic-pages")
+@click.argument("bucket_id", required=False, type=str)
+@click.option("--all", "compile_all", is_flag=True, help="Compile topic pages for every extracted bucket.")
+@click.option(
+    "--config",
+    "config_path",
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    default=Path("config/inference.yaml"),
+    show_default=True,
+    help="Path to the inference config file.",
+)
+def compile_topic_pages(bucket_id: str | None, compile_all: bool, config_path: Path | None) -> None:
+    """Compile cross-source topic pages from bucket-scoped extracted records."""
+    if compile_all and bucket_id is not None:
+        raise click.ClickException("pass either a bucket_id or --all, not both")
+    if not compile_all and bucket_id is None:
+        raise click.ClickException("pass a bucket_id or use --all")
+
+    data_dir = get_data_dir()
+    try:
+        config = InferenceConfig.load(config_path)
+        client = InferenceClient(config, data_dir=data_dir)
+    except (FileNotFoundError, ValueError) as exc:
+        raise click.ClickException(str(exc)) from exc
+
+    if compile_all:
+        try:
+            pages = compile_all_topic_pages(client=client, data_dir=data_dir)
+        except (FileNotFoundError, ValueError, KeyError) as exc:
+            raise click.ClickException(str(exc)) from exc
+        if not pages:
+            click.echo("No extracted buckets/records found to compile.")
+            return
+        click.echo(f"Compiled {len(pages)} topic page(s).")
+        for page in pages:
+            click.echo(f"{page.frontmatter['bucket_id']}\t{page.frontmatter['topic']}\t{page.output_path}")
+        return
+
+    try:
+        pages = compile_bucket_topic_pages(bucket_id, client=client, data_dir=data_dir)
+    except (FileNotFoundError, ValueError, KeyError) as exc:
+        raise click.ClickException(str(exc)) from exc
+    if not pages:
+        click.echo(f"No topic pages found for bucket {bucket_id}.")
+        return
+
+    click.echo(f"Compiled {len(pages)} topic page(s) for {bucket_id}")
+    for page in pages:
+        click.echo(f"{page.frontmatter['topic']}\t{page.output_path}")
 
 
 @inference.command("costs")

@@ -8,7 +8,7 @@ from pathlib import Path
 from click.testing import CliRunner
 
 from knowledge_forge.cli import cli
-from knowledge_forge.compile import compile_source_page
+from knowledge_forge.compile import compile_bucket_topic_pages, compile_source_page, compile_topic_page
 from knowledge_forge.intake.importer import RegistrationRequest, load_manifest, register_document
 from knowledge_forge.intake.manifest import BucketAssignment, DocumentStatus
 from knowledge_forge.parse.sectioning import Section
@@ -118,6 +118,42 @@ def _write_review_flag(data_dir: Path, doc_id: str, section_id: str) -> None:
         ),
         encoding="utf-8",
     )
+
+
+class _FakeCompileConfig:
+    compilation_model = "gpt-4o-mini"
+
+
+class _FakeCompileClient:
+    def __init__(self, response_text: str) -> None:
+        self.response_text = response_text
+        self.calls: list[dict[str, object]] = []
+        self.config = _FakeCompileConfig()
+
+    def complete(
+        self,
+        prompt: str,
+        system: str,
+        model: str | None = None,
+        schema: dict[str, object] | None = None,
+        **kwargs: object,
+    ):
+        self.calls.append(
+            {
+                "prompt": prompt,
+                "system": system,
+                "model": model,
+                "schema": schema,
+                **kwargs,
+            }
+        )
+        return type(
+            "FakeResult",
+            (),
+            {
+                "response_text": self.response_text,
+            },
+        )()
 
 
 def test_compile_source_page_renders_frontmatter_sections_summary_and_quality_notes(tmp_path: Path) -> None:
@@ -240,3 +276,273 @@ def test_compile_source_page_cli_supports_single_document_and_all(tmp_path: Path
     assert "Compiled 2 source page(s)." in every.output
     assert first_doc_id in every.output
     assert second_doc_id in every.output
+
+
+def test_compile_topic_page_renders_citations_applicability_notes_and_conflicts(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    service_doc_id = _register_extracted_fixture(
+        _write_pdf(tmp_path / "manual-service.pdf"), data_dir, revision="Rev 3"
+    )
+    bulletin_doc_id = _register_extracted_fixture(
+        _write_pdf(tmp_path / "manual-bulletin.pdf"),
+        data_dir,
+        revision="Bulletin 1",
+    )
+    startup_section = f"{service_doc_id}--startup--001"
+    startup_bulletin_section = f"{bulletin_doc_id}--startup--001"
+    spec_section = f"{bulletin_doc_id}--specifications--001"
+
+    _write_section(
+        data_dir,
+        service_doc_id,
+        section_id=startup_section,
+        title="Startup Procedure",
+        section_type="startup",
+        page_range=(18, 20),
+    )
+    _write_section(
+        data_dir,
+        bulletin_doc_id,
+        section_id=startup_bulletin_section,
+        title="Startup Procedure",
+        section_type="startup",
+        page_range=(21, 22),
+    )
+    _write_section(
+        data_dir,
+        bulletin_doc_id,
+        section_id=spec_section,
+        title="Technical Data",
+        section_type="specifications",
+        page_range=(30, 31),
+    )
+    _write_record(
+        data_dir,
+        service_doc_id,
+        "procedure",
+        f"{startup_section}--procedure--001",
+        {
+            **_base_record(
+                service_doc_id,
+                heading="Startup Procedure",
+                start_page=18,
+                end_page=20,
+                confidence=0.9,
+            ),
+            "title": "Start the controller",
+            "steps": [
+                {
+                    **_base_record(
+                        service_doc_id, heading="Startup Procedure", start_page=18, end_page=18, confidence=0.9
+                    ),
+                    "step_number": 1,
+                    "instruction": "Verify the discharge valve is open.",
+                    "note": None,
+                    "caution": None,
+                    "figure_ref": None,
+                }
+            ],
+            "applicability": {
+                **_base_record(
+                    service_doc_id,
+                    heading="Startup Procedure",
+                    start_page=18,
+                    end_page=20,
+                    confidence=0.9,
+                ),
+                "manufacturer": "Honeywell",
+                "family": "DC1000",
+                "models": ["DC1000"],
+                "serial_range": None,
+                "revision": "Rev 3",
+            },
+            "warnings": [],
+            "tools_required": ["multimeter"],
+        },
+    )
+    _write_record(
+        data_dir,
+        bulletin_doc_id,
+        "procedure",
+        f"{startup_bulletin_section}--procedure--001",
+        {
+            **_base_record(
+                bulletin_doc_id,
+                heading="Startup Procedure",
+                start_page=21,
+                end_page=22,
+                confidence=0.94,
+            ),
+            "title": "Start the controller",
+            "steps": [
+                {
+                    **_base_record(
+                        bulletin_doc_id, heading="Startup Procedure", start_page=21, end_page=21, confidence=0.94
+                    ),
+                    "step_number": 1,
+                    "instruction": "Close the bypass valve before energizing the unit.",
+                    "note": None,
+                    "caution": None,
+                    "figure_ref": None,
+                }
+            ],
+            "applicability": {
+                **_base_record(
+                    bulletin_doc_id, heading="Startup Procedure", start_page=21, end_page=22, confidence=0.94
+                ),
+                "manufacturer": "Honeywell",
+                "family": "DC1000",
+                "models": ["DC1200"],
+                "serial_range": None,
+                "revision": "Bulletin 1",
+            },
+            "warnings": [],
+            "tools_required": [],
+        },
+    )
+    _write_record(
+        data_dir,
+        bulletin_doc_id,
+        "spec_value",
+        f"{spec_section}--spec_value--001",
+        {
+            **_base_record(
+                bulletin_doc_id,
+                heading="Technical Data",
+                start_page=30,
+                end_page=31,
+                confidence=0.95,
+            ),
+            "parameter": "Operating pressure",
+            "value": "15",
+            "unit": "PSI",
+            "conditions": "startup mode",
+            "applicability": None,
+        },
+    )
+
+    client = _FakeCompileClient("- Consolidated startup flow [Source: example, p.1]")
+    startup_page = compile_topic_page(
+        "honeywell/dc1000/family",
+        "startup_procedure",
+        client=client,
+        data_dir=data_dir,
+    )
+    rendered_startup = startup_page.render()
+
+    assert (
+        startup_page.output_path
+        == data_dir / "compiled" / "topic-pages" / "honeywell-dc1000-family" / "startup_procedure.md"
+    )
+    assert "title: Honeywell DC1000 Startup Procedure" in rendered_startup
+    assert "topic: startup_procedure" in rendered_startup
+    assert "## Draft Synthesis" in rendered_startup
+    assert (
+        "Verify the discharge valve is open. [Source: honeywell-dc1000-service-manual-rev-3, p.18]" in rendered_startup
+    )
+    assert (
+        "Close the bypass valve before energizing the unit. "
+        "[Source: honeywell-dc1000-service-manual-bulletin-1, p.21]" in rendered_startup
+    )
+    assert "## Applicability Differences" in rendered_startup
+    assert "models: DC1000" in rendered_startup
+    assert "models: DC1200" in rendered_startup
+    assert "## Potential Contradictions" in rendered_startup
+    assert "Conflicting claims for `start-the-controller`" in rendered_startup
+    assert client.calls[0]["prompt_template"] == "compilation/topic_page"
+
+    specs_page = compile_topic_page(
+        "honeywell/dc1000/family",
+        "specifications",
+        client=_FakeCompileClient(""),
+        data_dir=data_dir,
+    )
+    rendered_specs = specs_page.render()
+    assert (
+        "Operating pressure: 15 PSI (startup mode) "
+        "[Source: honeywell-dc1000-service-manual-bulletin-1, pp.30-31]" in rendered_specs
+    )
+
+
+def test_compile_bucket_topic_pages_and_cli_support_single_bucket_and_all(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    data_dir = tmp_path / "data"
+    first_doc_id = _register_extracted_fixture(_write_pdf(tmp_path / "manual-1.pdf"), data_dir)
+    second_doc_id = _register_extracted_fixture(_write_pdf(tmp_path / "manual-2.pdf"), data_dir, revision="Rev 4")
+    for doc_id, section_type, title, record_type in (
+        (first_doc_id, "startup", "Startup Procedure", "procedure"),
+        (second_doc_id, "troubleshooting", "Troubleshooting", "troubleshooting_entry"),
+    ):
+        section_id = f"{doc_id}--{section_type}--001"
+        _write_section(
+            data_dir,
+            doc_id,
+            section_id=section_id,
+            title=title,
+            section_type=section_type,
+            page_range=(1, 2),
+        )
+        if record_type == "procedure":
+            payload = {
+                **_base_record(doc_id, heading=title, start_page=1, end_page=2, confidence=0.9),
+                "title": "Start the controller",
+                "steps": [
+                    {
+                        **_base_record(doc_id, heading=title, start_page=1, end_page=1, confidence=0.9),
+                        "step_number": 1,
+                        "instruction": "Apply control power.",
+                        "note": None,
+                        "caution": None,
+                        "figure_ref": None,
+                    }
+                ],
+                "applicability": None,
+                "warnings": [],
+                "tools_required": [],
+            }
+        else:
+            payload = {
+                **_base_record(doc_id, heading=title, start_page=1, end_page=2, confidence=0.91),
+                "symptom": "Unit will not start",
+                "possible_causes": ["Missing line voltage"],
+                "remedies": ["Restore line voltage"],
+            }
+        _write_record(data_dir, doc_id, record_type, f"{section_id}--{record_type}--001", payload)
+
+    pages = compile_bucket_topic_pages(
+        "honeywell/dc1000/family",
+        client=_FakeCompileClient("- Cited summary [Source: test, p.1]"),
+        data_dir=data_dir,
+    )
+    topics = {page.frontmatter["topic"] for page in pages}
+    assert topics == {"startup_procedure", "troubleshooting"}
+
+    class _CliConfig:
+        compilation_model = "gpt-4o-mini"
+
+    monkeypatch.setattr("knowledge_forge.cli.InferenceConfig.load", lambda _=None: _CliConfig())
+    monkeypatch.setattr("knowledge_forge.cli.InferenceClient", lambda config, data_dir=None: _FakeCompileClient(""))
+
+    runner = CliRunner()
+    env = {"KNOWLEDGE_FORGE_DATA_DIR": str(data_dir), "OPENAI_API_KEY": "test-secret"}
+
+    single = runner.invoke(
+        cli,
+        ["compile", "topic-pages", "honeywell/dc1000/family"],
+        env=env,
+    )
+    assert single.exit_code == 0
+    assert "Compiled 2 topic page(s) for honeywell/dc1000/family" in single.output
+    assert "startup_procedure" in single.output
+    assert "troubleshooting" in single.output
+
+    every = runner.invoke(
+        cli,
+        ["compile", "topic-pages", "--all"],
+        env=env,
+    )
+    assert every.exit_code == 0
+    assert "Compiled 2 topic page(s)." in every.output
+    assert "honeywell/dc1000/family" in every.output
