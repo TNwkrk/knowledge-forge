@@ -3,12 +3,14 @@
 from knowledge_forge.extract.engine import (
     SECTION_RECORD_TYPE_MAP,
     ExtractedRecord,
+    ExtractionReviewFlag,
     extract_document,
     extract_section,
     load_prompt_template,
     load_sections,
     record_types_for_section_type,
 )
+from knowledge_forge.extract.repair import RepairResult, repair_extraction
 from knowledge_forge.extract.schemas import (
     JSON_SCHEMA_REGISTRY,
     SCHEMA_REGISTRY,
@@ -36,6 +38,7 @@ __all__ = [
     "ContradictionCandidate",
     "extract_document",
     "ExtractedRecord",
+    "ExtractionReviewFlag",
     "extract_section",
     "get_json_schema",
     "get_schema_model",
@@ -45,6 +48,8 @@ __all__ = [
     "PartReference",
     "Procedure",
     "ProcedureStep",
+    "RepairResult",
+    "repair_extraction",
     "RevisionNote",
     "record_types_for_section_type",
     "SCHEMA_REGISTRY",

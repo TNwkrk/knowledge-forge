@@ -8,8 +8,6 @@ from pathlib import Path
 from time import perf_counter
 from typing import Any
 
-from jsonschema import ValidationError as JsonSchemaValidationError
-from jsonschema import validate
 from openai import OpenAI
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -17,6 +15,7 @@ from knowledge_forge.inference.config import InferenceConfig
 from knowledge_forge.inference.cost import estimate_cost
 from knowledge_forge.inference.logger import InferenceLogEntry, InferenceLogger, utc_now
 from knowledge_forge.inference.retry import RetryPolicy, retry_transient
+from knowledge_forge.inference.schema_validator import validate_response
 from knowledge_forge.intake.importer import get_data_dir
 
 MAX_JSON_ERROR_SNIPPET_LENGTH = 200
@@ -119,10 +118,13 @@ class InferenceClient:
                     if response_length > MAX_JSON_ERROR_SNIPPET_LENGTH:
                         snippet += "..."
                     raise ValueError(f"response was not valid JSON: {exc.msg}. Output snippet: {snippet!r}") from exc
-                try:
-                    validate(instance=parsed_json, schema=schema)
-                except JsonSchemaValidationError as exc:
-                    raise ValueError(f"response did not satisfy schema: {exc.message}") from exc
+                validation = validate_response(parsed_json, schema)
+                if not validation.valid:
+                    snippet = response_text[:MAX_JSON_ERROR_SNIPPET_LENGTH]
+                    if len(response_text) > MAX_JSON_ERROR_SNIPPET_LENGTH:
+                        snippet += "..."
+                    joined_errors = "; ".join(validation.errors)
+                    raise ValueError(f"response did not satisfy schema: {joined_errors}. Output snippet: {snippet!r}")
                 schema_valid = True
 
             estimated_cost_usd = _safe_estimate_cost(

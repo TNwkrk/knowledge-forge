@@ -66,13 +66,20 @@ def _base_record() -> dict[str, object]:
 
 class _FakeConfig:
     extraction_model: str = "gpt-4o-mini"
+    max_tokens: int = 4096
 
 
 class _FakeClient:
-    def __init__(self, responses: dict[str, list[dict[str, object]]]) -> None:
+    def __init__(
+        self,
+        responses: dict[str, list[dict[str, object]] | Exception],
+        *,
+        output_tokens: int = 32,
+    ) -> None:
         self.responses = responses
         self.calls: list[dict[str, object]] = []
         self.config = _FakeConfig()
+        self.output_tokens = output_tokens
 
     def complete(
         self,
@@ -92,11 +99,16 @@ class _FakeClient:
                 **kwargs,
             }
         )
+        response = self.responses[record_type]
+        if isinstance(response, Exception):
+            raise response
         return type(
             "FakeResult",
             (),
             {
-                "parsed_json": {"records": self.responses[record_type]},
+                "parsed_json": {"records": response},
+                "input_tokens": 128,
+                "output_tokens": self.output_tokens,
             },
         )()
 
@@ -271,14 +283,29 @@ def test_extract_cli_supports_document_and_single_section(monkeypatch, tmp_path:
         section_id: str | None = None,
         config: object | None = None,
         data_dir: Path | None = None,
+        min_confidence: float = 0.0,
+        max_repair_attempts: int = 2,
     ):
-        calls.append({"doc_id": doc_id, "section_id": section_id, "config": config, "data_dir": data_dir})
+        calls.append(
+            {
+                "doc_id": doc_id,
+                "section_id": section_id,
+                "config": config,
+                "data_dir": data_dir,
+                "min_confidence": min_confidence,
+                "max_repair_attempts": max_repair_attempts,
+            }
+        )
         return [object(), object()]
 
     monkeypatch.setattr("knowledge_forge.cli.extract_document", fake_extract_document)
     env = {"KNOWLEDGE_FORGE_DATA_DIR": str(data_dir)}
 
-    single = runner.invoke(cli, ["extract", "doc-001", "--config", str(config_path)], env=env)
+    single = runner.invoke(
+        cli,
+        ["extract", "doc-001", "--min-confidence", "0.8", "--max-repair-attempts", "1", "--config", str(config_path)],
+        env=env,
+    )
     assert single.exit_code == 0
     assert "Extracted 2 record(s) for doc-001" in single.output
 
@@ -290,11 +317,97 @@ def test_extract_cli_supports_document_and_single_section(monkeypatch, tmp_path:
     assert one_section.exit_code == 0
     assert "Section: doc-001--startup--001" in one_section.output
     assert calls == [
-        {"doc_id": "doc-001", "section_id": None, "config": config_sentinel, "data_dir": data_dir},
+        {
+            "doc_id": "doc-001",
+            "section_id": None,
+            "config": config_sentinel,
+            "data_dir": data_dir,
+            "min_confidence": 0.8,
+            "max_repair_attempts": 1,
+        },
         {
             "doc_id": "doc-001",
             "section_id": "doc-001--startup--001",
             "config": config_sentinel,
             "data_dir": data_dir,
+            "min_confidence": 0.0,
+            "max_repair_attempts": 2,
         },
     ]
+
+
+def test_extract_section_flags_low_confidence_records_for_review(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    section = Section(
+        doc_id="honeywell-dc1000-service-manual-rev3",
+        section_id="honeywell-dc1000-service-manual-rev3--startup--001",
+        section_type="startup",
+        title="Startup Procedure",
+        content="1. Verify the discharge valve is open.\n2. Apply control power.",
+        page_range=(18, 20),
+        heading_path=["DC1000 Service Manual", "Startup Procedure"],
+    )
+    client = _FakeClient(
+        {
+            "procedure": [
+                {
+                    **_base_record(),
+                    "title": "Start the controller",
+                    "steps": [
+                        {
+                            **_base_record(),
+                            "source_page_range": {"start_page": 18, "end_page": 18},
+                            "step_number": 1,
+                            "instruction": "Verify the discharge valve is open.",
+                            "note": None,
+                            "caution": None,
+                            "figure_ref": None,
+                        }
+                    ],
+                    "applicability": None,
+                    "warnings": [],
+                    "tools_required": [],
+                }
+            ],
+            "warning": [
+                {
+                    **_base_record(),
+                    "severity": "warning",
+                    "text": "Do not energize the motor with the casing dry.",
+                    "context": "Startup",
+                    "applicability": None,
+                }
+            ],
+        },
+        output_tokens=4096,
+    )
+
+    records = extract_section(section, client=client, data_dir=data_dir, min_confidence=0.8)
+
+    assert len(records) == 2
+    review_path = data_dir / "extracted" / section.doc_id / "reviews" / f"{section.section_id}--procedure.json"
+    assert review_path.exists()
+    payload = json.loads(review_path.read_text(encoding="utf-8"))
+    assert payload["reasons"] == ["below_min_confidence"]
+
+
+def test_extract_section_flags_unrepairable_response_for_review(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    section = Section(
+        doc_id="honeywell-dc1000-service-manual-rev3",
+        section_id="honeywell-dc1000-service-manual-rev3--specifications--001",
+        section_type="specifications",
+        title="Electrical Specifications",
+        content="Supply voltage: 24 VDC",
+        page_range=(42, 42),
+        heading_path=["Electrical Specifications"],
+    )
+    client = _FakeClient({"spec_value": ValueError("response did not satisfy schema: $.records: missing title")})
+
+    records = extract_section(section, client=client, data_dir=data_dir, max_repair_attempts=1)
+
+    assert records == []
+    review_path = data_dir / "extracted" / section.doc_id / "reviews" / f"{section.section_id}--spec_value.json"
+    assert review_path.exists()
+    payload = json.loads(review_path.read_text(encoding="utf-8"))
+    assert payload["reasons"] == ["repair_failed"]

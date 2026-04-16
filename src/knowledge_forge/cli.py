@@ -330,6 +330,20 @@ def section(doc_id: str | None, section_all: bool) -> None:
 @click.argument("doc_id", type=str)
 @click.option("--section", "section_id", type=str, help="Extract only one section from the document.")
 @click.option(
+    "--min-confidence",
+    type=click.FloatRange(min=0.0, max=1.0),
+    default=0.0,
+    show_default=True,
+    help="Flag records below this confidence threshold for review.",
+)
+@click.option(
+    "--max-repair-attempts",
+    type=click.IntRange(min=0),
+    default=2,
+    show_default=True,
+    help="Maximum repair attempts for invalid extraction responses.",
+)
+@click.option(
     "--config",
     "config_path",
     type=click.Path(exists=True, dir_okay=False, path_type=Path),
@@ -337,17 +351,28 @@ def section(doc_id: str | None, section_all: bool) -> None:
     show_default=True,
     help="Inference configuration file.",
 )
-def extract(doc_id: str, section_id: str | None, config_path: Path) -> None:
+def extract(
+    doc_id: str, section_id: str | None, min_confidence: float, max_repair_attempts: int, config_path: Path
+) -> None:
     """Extract structured records from canonical sections."""
     try:
         config = InferenceConfig.load(config_path)
-        records = extract_document(doc_id, section_id=section_id, config=config, data_dir=get_data_dir())
+        records = extract_document(
+            doc_id,
+            section_id=section_id,
+            config=config,
+            data_dir=get_data_dir(),
+            min_confidence=min_confidence,
+            max_repair_attempts=max_repair_attempts,
+        )
     except (FileNotFoundError, KeyError, ValueError) as exc:
         raise click.ClickException(str(exc)) from exc
 
     click.echo(f"Extracted {len(records)} record(s) for {doc_id}")
     if section_id is not None:
         click.echo(f"Section: {section_id}")
+    if min_confidence > 0:
+        click.echo(f"Review threshold: {min_confidence:.2f}")
     click.echo(f"Output dir: {get_data_dir() / 'extracted' / doc_id}")
 
 
