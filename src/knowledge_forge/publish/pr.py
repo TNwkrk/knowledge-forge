@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -12,11 +13,12 @@ from urllib import request
 
 from pydantic import BaseModel, ConfigDict
 
+from knowledge_forge.intake.importer import get_data_dir
 from knowledge_forge.publish.stage import PublishManifest
 from knowledge_forge.publish.validate import ValidationReport, validate_publish_output
 
 DEFAULT_TARGET_REPO = "TNwkrk/FlowCommander"
-DEFAULT_LOCAL_TARGET_PATH = Path("/Users/taylor/development/FlowCommander")
+DEFAULT_LOCAL_TARGET_PATH: Path | None = None
 DEFAULT_LABELS = ("knowledge-forge", "auto-generated")
 
 
@@ -107,10 +109,15 @@ def create_publish_pr(
     """Create a FlowCommander publish PR from one staged publish run."""
     if not publish_run_id.strip():
         raise ValueError("publish_run_id must not be blank")
+    if not re.fullmatch(r"[A-Za-z0-9._-]+", publish_run_id) or ".." in publish_run_id:
+        raise ValueError(
+            f"publish_run_id must contain only alphanumeric characters, hyphens, underscores, "
+            f"and dots: {publish_run_id!r}"
+        )
     if not target_repo.strip():
         raise ValueError("target_repo must not be blank")
 
-    stage_dir = _resolve_data_dir(data_dir) / "publish" / publish_run_id
+    stage_dir = get_data_dir(data_dir) / "publish" / publish_run_id
     publish_root = stage_dir / "repo-wiki" / "knowledge"
     report = validate_publish_output(stage_dir)
     if not report.valid:
@@ -127,6 +134,7 @@ def create_publish_pr(
     )
     base_branch = _default_branch(repo_path, run_git)
     branch = f"knowledge-forge/{publish_run_id}"
+    _ensure_clean_work_tree(repo_path, run_git)
     run_git(repo_path, "checkout", "-B", branch, f"origin/{base_branch}")
 
     files_added, files_updated, files_removed = _sync_publish_tree(
@@ -176,7 +184,7 @@ def create_publish_pr(
     pr_number, pr_url = api.create_pull_request(
         target_repo,
         title=f"[Knowledge Forge] Publish {_bucket_description(manifest)}",
-        body=_build_pr_body(manifest, report),
+        body=_build_pr_body(manifest, report, files_added, files_updated, files_removed),
         head=branch,
         base=base_branch,
         draft=True,
@@ -193,13 +201,6 @@ def create_publish_pr(
         dry_run=False,
         target_repo_path=repo_path,
     )
-
-
-def _resolve_data_dir(data_dir: Path | None) -> Path:
-    if data_dir is not None:
-        return data_dir
-    override = os.getenv("KNOWLEDGE_FORGE_DATA_DIR")
-    return Path(override).expanduser().resolve() if override else Path("data").resolve()
 
 
 def _load_publish_manifest(publish_root: Path, publish_run_id: str) -> PublishManifest:
@@ -228,7 +229,7 @@ def _prepare_target_repo(
         return repo_path
 
     repo_path.parent.mkdir(parents=True, exist_ok=True)
-    git_runner(repo_path.parent, "clone", f"git@github.com:{target_repo}.git", str(repo_path))
+    git_runner(repo_path.parent, "clone", f"https://github.com/{target_repo}.git", str(repo_path))
     return repo_path
 
 
@@ -246,7 +247,11 @@ def _resolve_target_repo_path(
     if env_path:
         return Path(env_path).expanduser().resolve()
 
-    if target_repo == DEFAULT_TARGET_REPO and DEFAULT_LOCAL_TARGET_PATH.exists():
+    if (
+        target_repo == DEFAULT_TARGET_REPO
+        and DEFAULT_LOCAL_TARGET_PATH is not None
+        and DEFAULT_LOCAL_TARGET_PATH.exists()
+    ):
         return DEFAULT_LOCAL_TARGET_PATH.resolve()
 
     slug = target_repo.replace("/", "-")
@@ -258,6 +263,14 @@ def _default_branch(repo_path: Path, git_runner: _GitRunner) -> str:
     if not head_ref:
         return "main"
     return head_ref.split("/", 1)[1]
+
+
+def _ensure_clean_work_tree(repo_path: Path, git_runner: _GitRunner) -> None:
+    status = git_runner(repo_path, "status", "--porcelain")
+    if status.strip():
+        raise RuntimeError(
+            f"target repo at {repo_path} has uncommitted changes; clean the working tree before running a publish"
+        )
 
 
 def _sync_publish_tree(
@@ -312,10 +325,13 @@ def _bucket_description(manifest: PublishManifest) -> str:
     return f"{len(manifest.source_documents)} source documents"
 
 
-def _build_pr_body(manifest: PublishManifest, report: ValidationReport) -> str:
-    files_added = len(manifest.files_written)
-    files_updated = len(manifest.files_updated)
-    files_removed = len(manifest.files_removed)
+def _build_pr_body(
+    manifest: PublishManifest,
+    report: ValidationReport,
+    files_added: list[str],
+    files_updated: list[str],
+    files_removed: list[str],
+) -> str:
     source_lines = "\n".join(f"- `{doc_id}`" for doc_id in manifest.source_documents)
     warning_lines = "\n".join(f"- {warning}" for warning in report.warnings) or "- None"
     bucket_lines = "\n".join(f"- `{bucket}`" for bucket in manifest.buckets) or "- None"
@@ -327,9 +343,11 @@ def _build_pr_body(manifest: PublishManifest, report: ValidationReport) -> str:
         "## Source documents\n"
         f"{source_lines}\n\n"
         "## File counts\n"
-        f"- Added: {files_added}\n"
-        f"- Updated: {files_updated}\n"
-        f"- Removed: {files_removed}\n\n"
+        "These counts reflect the actual downstream changes made during sync. "
+        "Files already identical to the staged output are not included.\n"
+        f"- Added: {len(files_added)}\n"
+        f"- Updated: {len(files_updated)}\n"
+        f"- Removed: {len(files_removed)}\n\n"
         "## Manifest\n"
         f"- `repo-wiki/knowledge/_manifests/{manifest.publish_run_id}.json`\n\n"
         "## Warnings\n"

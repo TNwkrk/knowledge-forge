@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import subprocess
+import urllib.error
 from datetime import date
 from pathlib import Path
 
@@ -611,7 +613,7 @@ def publish_pr(publish_run_id: str, target_repo: str, dry_run: bool, target_repo
             data_dir=get_data_dir(),
             target_repo_path=target_repo_path,
         )
-    except (FileNotFoundError, ValueError, RuntimeError) as exc:
+    except (FileNotFoundError, ValueError, RuntimeError, subprocess.CalledProcessError, urllib.error.URLError) as exc:
         raise click.ClickException(str(exc)) from exc
 
     click.echo(f"Publish run: {publish_run_id}")

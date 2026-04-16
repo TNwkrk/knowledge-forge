@@ -354,6 +354,10 @@ def test_create_publish_pr_dry_run_syncs_only_knowledge_subtree(tmp_path: Path) 
     (repo_path / "repo-wiki" / "notes.md").write_text("keep me", encoding="utf-8")
     (repo_path / "repo-wiki" / "knowledge" / "source-index").mkdir(parents=True, exist_ok=True)
     (repo_path / "repo-wiki" / "knowledge" / "source-index" / "old-doc.md").write_text("old", encoding="utf-8")
+    subprocess.run(["git", "add", "-A"], cwd=repo_path, check=True, capture_output=True, text=True)
+    subprocess.run(
+        ["git", "commit", "-m", "Add initial wiki files"], cwd=repo_path, check=True, capture_output=True, text=True
+    )
 
     _write_markdown(
         publish_root / "source-index" / "new-doc.md",
