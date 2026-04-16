@@ -56,8 +56,9 @@ developer tooling, and CI baseline for this repo:
 - `pyproject.toml` defines packaging metadata, runtime dependencies, and the
   development extras used today
 - `.pre-commit-config.yaml` defines the shared local lint and format hooks
-- `.github/workflows/ci.yaml` runs lint and test checks on pushes to `main` and
-  on pull requests
+- `.github/workflows/ci.yaml` runs a fast preflight on all pull requests,
+  including drafts, and runs full lint/test on pushes to `main` and pull
+  requests that are ready for review
 - `src/knowledge_forge/` is the package root for future implementation work
 - `tests/` contains the initial smoke-test scaffold for imports and the CLI
 
