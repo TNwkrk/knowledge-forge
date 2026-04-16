@@ -457,6 +457,8 @@ def compile_source_pages(doc_id: str | None, compile_all: bool) -> None:
     "--config",
     "config_path",
     type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    default=Path("config/inference.yaml"),
+    show_default=True,
     help="Path to the inference config file.",
 )
 def compile_topic_pages(bucket_id: str | None, compile_all: bool, config_path: Path | None) -> None:
@@ -479,7 +481,7 @@ def compile_topic_pages(bucket_id: str | None, compile_all: bool, config_path: P
         except (FileNotFoundError, ValueError, KeyError) as exc:
             raise click.ClickException(str(exc)) from exc
         if not pages:
-            click.echo("No extracted topic pages found.")
+            click.echo("No extracted buckets/records found to compile.")
             return
         click.echo(f"Compiled {len(pages)} topic page(s).")
         for page in pages:

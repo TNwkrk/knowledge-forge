@@ -439,6 +439,8 @@ def _load_bucket_records(bucket_id: str, *, data_dir: Path) -> list[TopicRecord]
             continue
         sections = {section.section_id: section for section in load_sections(manifest.doc_id, data_dir=data_dir)}
         for record_type, record_path, record in _load_extracted_records(manifest.doc_id, data_dir=data_dir):
+            if bucket_id not in {context.bucket_id for context in record.bucket_context}:
+                continue
             section = sections.get(_section_id_from_record_path(record_path))
             if section is None:
                 continue
