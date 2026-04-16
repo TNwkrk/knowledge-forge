@@ -163,6 +163,8 @@ Extraction responses are validated against JSON schemas:
   1. Re-prompt with the invalid output and a correction instruction
   2. If still invalid, relax schema constraints and retry
   3. If still invalid, flag for manual review
+- Confidence scoring is applied after validation using schema validity, whether repair was needed, parse quality, and output-token headroom
+- `kf extract --min-confidence <threshold>` writes review flags under `data/extracted/{doc_id}/reviews/` for records that need inspection
 - Compilation responses are validated for required frontmatter fields and structural completeness
 
 ## Inference operations

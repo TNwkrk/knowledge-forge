@@ -19,6 +19,7 @@ from knowledge_forge.inference.config import BatchSettings, InferenceConfig, Rat
 from knowledge_forge.inference.cost import CostReport, CostTotals, ModelPricing, aggregate_costs, estimate_cost
 from knowledge_forge.inference.logger import InferenceLogEntry, InferenceLogger
 from knowledge_forge.inference.retry import RetryPolicy, is_transient_error, retry_transient
+from knowledge_forge.inference.schema_validator import ValidationResult, validate_response
 
 __all__ = [
     "BatchBuilder",
@@ -48,4 +49,6 @@ __all__ = [
     "RetryPolicy",
     "retry_transient",
     "submit_batch",
+    "ValidationResult",
+    "validate_response",
 ]

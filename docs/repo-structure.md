@@ -193,8 +193,10 @@ knowledge-forge/
     │       └── {section_id}.json
     ├── extracted/                   # extraction records
     │   └── {doc_id}/
-    │       └── {record_type}/
-    │           └── {record_id}.json
+    │       ├── {record_type}/
+    │       │   └── {record_id}.json
+    │       └── reviews/
+    │           └── {section_id}--{record_type}.json
     ├── compiled/                    # wiki compilation output
     │   ├── source-pages/
     │   ├── topic-pages/

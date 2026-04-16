@@ -27,6 +27,7 @@ from knowledge_forge.inference import (
     poll_batch,
     retry_transient,
     submit_batch,
+    validate_response,
 )
 from knowledge_forge.inference.logger import iter_log_entries
 
@@ -354,6 +355,32 @@ def test_inference_client_rejects_non_json_schema_response(tmp_path: Path) -> No
     payload = json.loads(next((tmp_path / "logs").rglob("*.json")).read_text(encoding="utf-8"))
     assert payload["request_id"] == "resp_not_json"
     assert payload["estimated_cost_usd"] == estimate_cost("gpt-4o", 1, 1, _build_config().pricing)
+
+
+def test_validate_response_reports_schema_error_paths() -> None:
+    result = validate_response(
+        {"records": [{"step_number": 0}]},
+        {
+            "type": "object",
+            "properties": {
+                "records": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {"step_number": {"type": "integer", "minimum": 1}},
+                        "required": ["step_number"],
+                    },
+                }
+            },
+            "required": ["records"],
+        },
+    )
+
+    assert result.valid is False
+    error_message = result.errors[0]
+    assert "step_number" in error_message
+    assert "minimum" in error_message or "less than the minimum" in error_message
+    assert "1" in error_message
 
 
 def test_batch_builder_writes_openai_batch_jsonl_with_multiple_requests(tmp_path: Path) -> None:
