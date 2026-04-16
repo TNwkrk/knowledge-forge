@@ -55,7 +55,7 @@ def compile_family_overview(bucket_id: str, *, data_dir: Path | None = None) -> 
         "publish_run": PUBLISH_RUN_PLACEHOLDER,
         "source_documents": _build_source_documents(family_input.manifests),
         "generated_at": generated_at,
-        "extraction_version": _join_sorted(_manifest_statuses(family_input.manifests)),
+        "document_statuses": _join_sorted(_manifest_statuses(family_input.manifests)),
         "compilation_version": COMPILATION_VERSION,
         "bucket_id": family_input.bucket_id,
         "manufacturer": family_input.manufacturer,
@@ -74,7 +74,7 @@ def compile_family_overview(bucket_id: str, *, data_dir: Path | None = None) -> 
         content=_render_family_overview(family_input),
         compile_metadata=CompileMetadata(
             generated_at=generated_at,
-            extraction_versions=_manifest_statuses(family_input.manifests),
+            extraction_versions=[],
             parser_versions=[],
             record_counts=record_counts,
             review_flag_count=0,
@@ -105,7 +105,7 @@ def compile_manufacturer_index(manufacturer: str, *, data_dir: Path | None = Non
         "publish_run": PUBLISH_RUN_PLACEHOLDER,
         "source_documents": _build_source_documents(manifests),
         "generated_at": generated_at,
-        "extraction_version": _join_sorted(_manifest_statuses(manifests)),
+        "document_statuses": _join_sorted(_manifest_statuses(manifests)),
         "compilation_version": COMPILATION_VERSION,
         "manufacturer": manufacturer_name,
         "page_type": "manufacturer_index",
@@ -117,7 +117,7 @@ def compile_manufacturer_index(manufacturer: str, *, data_dir: Path | None = Non
         content=_render_manufacturer_index(manufacturer_name, family_inputs),
         compile_metadata=CompileMetadata(
             generated_at=generated_at,
-            extraction_versions=_manifest_statuses(manifests),
+            extraction_versions=[],
             parser_versions=[],
             record_counts={
                 "families": len(family_inputs),
@@ -172,8 +172,7 @@ def _render_family_overview(family_input: FamilyOverviewInput) -> str:
     if family_input.topics:
         for topic in family_input.topics:
             lines.append(
-                f"- [{TOPIC_TITLES.get(topic, topic.replace('_', ' ').title())}]"
-                f"(../../../topic-pages/{slugify(family_input.bucket_id)}/{topic}.md)"
+                f"- [{TOPIC_TITLES[topic]}](../../../topic-pages/{slugify(family_input.bucket_id)}/{topic}.md)"
             )
     else:
         lines.append("- No compiled topic pages available yet.")
@@ -217,9 +216,7 @@ def _render_manufacturer_index(manufacturer: str, family_inputs: list[FamilyOver
     ]
     for family_input in sorted(family_inputs, key=lambda entry: entry.family.casefold()):
         family_slug = slugify(family_input.family)
-        topic_summary = ", ".join(
-            TOPIC_TITLES.get(topic, topic.replace("_", " ").title()) for topic in family_input.topics
-        )
+        topic_summary = ", ".join(TOPIC_TITLES[topic] for topic in family_input.topics)
         lines.append(
             f"- [{family_input.family}]({family_slug}/_index.md) — "
             f"{len(family_input.manifests)} documents; "
