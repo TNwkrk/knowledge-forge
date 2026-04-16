@@ -42,7 +42,7 @@ _STOPWORDS = {
     "to",
     "with",
 }
-_NEGATIONS = {"no", "not", "never", "without", "avoid", "do-not", "don't"}
+_NEGATIONS = {"no", "not", "never", "without", "avoid"}
 
 ClaimType = Literal["spec_value", "procedure_step", "warning", "alarm_definition"]
 
@@ -217,8 +217,7 @@ def _expand_comparable_claims(
                 subject_key=record.code.casefold(),
                 subject_label=record.code,
                 claim_text=(
-                    f"{record.description}; cause {record.cause}; "
-                    f"remedy {record.remedy}; severity {record.severity}"
+                    f"{record.description}; cause {record.cause}; remedy {record.remedy}; severity {record.severity}"
                 ),
                 semantic_signature="|".join(
                     (
@@ -258,8 +257,8 @@ def _expand_comparable_claims(
         return claims
 
     procedure_scope = _applicability_scope(record.applicability or record, manifest)
-    for index, step in enumerate(record.steps, start=1):
-        step_id = f"{record_id}::step-{index:03d}"
+    for step in record.steps:
+        step_id = f"{record_id}::step-{step.step_number:03d}"
         claims.append(
             ComparableClaim(
                 record_id=step_id,
@@ -335,10 +334,14 @@ def _build_contradiction_candidate(
         confidence=round(min(left.record.confidence, right.record.confidence), 3),
         bucket_context=[context for context in authoritative.record.bucket_context if context.bucket_id == bucket_id]
         or authoritative.record.bucket_context,
-        record_ids=[left.record_id, right.record_id],
-        conflicting_claim=f"{left.subject_label} differs between {left.document_type} and {right.document_type}.",
+        record_ids=[authoritative.record_id, secondary.record_id],
+        conflicting_claim=(
+            f"{authoritative.subject_label} differs between "
+            f"{authoritative.document_type} and {secondary.document_type}."
+        ),
         rationale=(
-            f"{left.doc_id} claims '{left.claim_text}' while {right.doc_id} claims '{right.claim_text}'. "
+            f"{authoritative.doc_id} claims '{authoritative.claim_text}' while "
+            f"{secondary.doc_id} claims '{secondary.claim_text}'. "
             f"Both apply to overlapping records in bucket {bucket_id}."
         ),
         review_status="pending",
@@ -397,21 +400,25 @@ def _document_precedence(manifest: ManifestEntry) -> tuple[int, str]:
         return 2, "revised manual"
     if document_type in {"datasheet", "specification-sheet", "selection-guide", "certification"}:
         return 4, "OEM datasheet or specification sheet"
-    if document_type in {
-        "startup-procedure",
-        "shutdown-procedure",
-        "winterization-procedure",
-        "pm-procedure",
-        "sop",
-        "checklist",
-        "safety-procedure",
-        "loto-sheet",
-        "permit-reference",
-        "field-form",
-        "inspection-template",
-        "commissioning-sheet",
-        "best-practice",
-    } or document_class == "operational":
+    if (
+        document_type
+        in {
+            "startup-procedure",
+            "shutdown-procedure",
+            "winterization-procedure",
+            "pm-procedure",
+            "sop",
+            "checklist",
+            "safety-procedure",
+            "loto-sheet",
+            "permit-reference",
+            "field-form",
+            "inspection-template",
+            "commissioning-sheet",
+            "best-practice",
+        }
+        or document_class == "operational"
+    ):
         return 5, "internal SOP or best practice"
     if document_type in {"quick-start", "supplemental-guide"}:
         return 6, "quick start or supplemental guide"
@@ -448,11 +455,24 @@ def _applicability_scope(
     )
 
 
+def _normalized_revision(revision: str | None) -> str | None:
+    if revision is None:
+        return None
+    normalized = revision.strip().casefold()
+    return normalized or None
+
+
 def _applicability_overlaps(left: ApplicabilityScope, right: ApplicabilityScope) -> bool:
     if left.manufacturer != right.manufacturer or left.family != right.family:
         return False
     if left.models and right.models and not (left.models & right.models):
         return False
+
+    left_revision = _normalized_revision(left.revision)
+    right_revision = _normalized_revision(right.revision)
+    if left_revision is not None and right_revision is not None and left_revision != right_revision:
+        return False
+
     return True
 
 
@@ -510,8 +530,6 @@ def _heuristic_text_contradiction(left_text: str, right_text: str) -> bool:
 
 def _meaningful_tokens(value: str) -> set[str]:
     tokens = {
-        token
-        for token in re.findall(r"[a-z0-9]+", value.casefold())
-        if token not in _STOPWORDS and len(token) > 1
+        token for token in re.findall(r"[a-z0-9]+", value.casefold()) if token not in _STOPWORDS and len(token) > 1
     }
     return tokens
