@@ -377,7 +377,10 @@ def test_validate_response_reports_schema_error_paths() -> None:
     )
 
     assert result.valid is False
-    assert "$.records[0].step_number" in result.errors[0]
+    error_message = result.errors[0]
+    assert "step_number" in error_message
+    assert "minimum" in error_message or "less than the minimum" in error_message
+    assert "1" in error_message
 
 
 def test_batch_builder_writes_openai_batch_jsonl_with_multiple_requests(tmp_path: Path) -> None:

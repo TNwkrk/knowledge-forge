@@ -89,7 +89,12 @@ class _FakeClient:
         schema: dict[str, object] | None = None,
         **kwargs: object,
     ):
-        record_type = str(kwargs["prompt_template"]).split("/")[-1]
+        parts = str(kwargs["prompt_template"]).split("/")
+        # Map repair templates like "extraction/spec_value/reprompt" back to "spec_value"
+        if len(parts) > 1 and parts[-1] in ("reprompt", "relaxed"):
+            record_type = parts[-2]
+        else:
+            record_type = parts[-1]
         self.calls.append(
             {
                 "prompt": prompt,
@@ -100,6 +105,46 @@ class _FakeClient:
             }
         )
         response = self.responses[record_type]
+        if isinstance(response, Exception):
+            raise response
+        return type(
+            "FakeResult",
+            (),
+            {
+                "parsed_json": {"records": response},
+                "input_tokens": 128,
+                "output_tokens": self.output_tokens,
+            },
+        )()
+
+
+class _SequentialFakeClient:
+    """Fake client that returns responses in call order, popping from a list."""
+
+    def __init__(self, responses: list[object], *, output_tokens: int = 32) -> None:
+        self._responses = list(responses)
+        self.calls: list[dict[str, object]] = []
+        self.config = _FakeConfig()
+        self.output_tokens = output_tokens
+
+    def complete(
+        self,
+        prompt: str,
+        system: str,
+        model: str | None = None,
+        schema: dict[str, object] | None = None,
+        **kwargs: object,
+    ):
+        self.calls.append(
+            {
+                "prompt": prompt,
+                "system": system,
+                "model": model,
+                "schema": schema,
+                **kwargs,
+            }
+        )
+        response = self._responses.pop(0)
         if isinstance(response, Exception):
             raise response
         return type(
@@ -411,3 +456,42 @@ def test_extract_section_flags_unrepairable_response_for_review(tmp_path: Path) 
     assert review_path.exists()
     payload = json.loads(review_path.read_text(encoding="utf-8"))
     assert payload["reasons"] == ["repair_failed"]
+
+
+def test_extract_section_succeeds_after_repair(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    section = Section(
+        doc_id="honeywell-dc1000-service-manual-rev3",
+        section_id="honeywell-dc1000-service-manual-rev3--specifications--001",
+        section_type="specifications",
+        title="Electrical Specifications",
+        content="Supply voltage: 24 VDC",
+        page_range=(42, 42),
+        heading_path=["Electrical Specifications"],
+    )
+    valid_spec = {
+        **_base_record(),
+        "source_doc_id": "honeywell-dc1000-service-manual-rev3",
+        "source_heading": "Electrical Specifications",
+        "parameter": "Supply voltage",
+        "value": "24",
+        "unit": "VDC",
+        "conditions": None,
+        "applicability": None,
+    }
+    # First call raises a schema ValueError; second call (reprompt) returns valid data.
+    client = _SequentialFakeClient(
+        [
+            ValueError("response did not satisfy schema: $.records[0].parameter missing"),
+            [valid_spec],
+        ]
+    )
+
+    records = extract_section(section, client=client, data_dir=data_dir, max_repair_attempts=2)
+
+    assert len(records) == 1
+    assert records[0].parameter == "Supply voltage"
+    assert len(client.calls) == 2
+    assert client.calls[1]["prompt_template"] == "extraction/spec_value/reprompt"
+    # Repaired record has a confidence penalty; confirm it is below a perfect score.
+    assert records[0].confidence < 1.0

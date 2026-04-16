@@ -140,7 +140,7 @@ def extract_section(
         schema = _record_list_schema(record_type)
         prompt = render_prompt(template, section=section, record_type=record_type)
         model = template.model or client.config.extraction_model
-        attempt = _extract_with_repair(
+        attempt, failed_errors, failed_attempts = _extract_with_repair(
             section=section,
             record_type=record_type,
             prompt=prompt,
@@ -160,8 +160,8 @@ def extract_section(
                     min_confidence=min_confidence,
                     record_ids=[],
                     record_confidences=[],
-                    repair_attempts=max_repair_attempts,
-                    errors=["repair path exhausted"],
+                    repair_attempts=failed_attempts,
+                    errors=failed_errors,
                 ),
                 data_dir=resolved_data_dir,
             )
@@ -276,13 +276,18 @@ def build_record_id(section_id: str, record_type: str, sequence: int) -> str:
 def load_section_quality(section: Section, *, data_dir: Path) -> float:
     """Load normalized parse quality for a section's document when available."""
     quality_path = data_dir / "parsed" / section.doc_id / "quality.json"
+    default_score = 1.0 if section.content.strip() else 0.5
     if not quality_path.exists():
-        return 1.0 if section.content.strip() else 0.5
+        return default_score
 
-    payload = json.loads(quality_path.read_text(encoding="utf-8"))
+    try:
+        payload = json.loads(quality_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return default_score
+
     overall_score = payload.get("overall_score")
     if not isinstance(overall_score, (int, float)):
-        return 1.0 if section.content.strip() else 0.5
+        return default_score
     return round(max(0.0, min(float(overall_score) / 100.0, 1.0)), 3)
 
 
@@ -378,7 +383,8 @@ def _extract_with_repair(
     schema: dict[str, object],
     client: InferenceClient,
     max_repair_attempts: int,
-) -> ExtractionAttempt | None:
+) -> tuple[ExtractionAttempt | None, list[str], int]:
+    """Return ``(attempt, errors, repair_attempts)``; attempt is None on irrecoverable failure."""
     prompt_template = f"extraction/{record_type}"
     try:
         result = client.complete(
@@ -390,15 +396,19 @@ def _extract_with_repair(
             source_doc_id=section.doc_id,
             source_section_id=section.section_id,
         )
-        return ExtractionAttempt(
-            parsed_json=result.parsed_json,
-            validation=ValidationResult(valid=True),
-            output_tokens=result.output_tokens,
-            repaired=False,
-            repair_attempts=0,
-            repair_errors=[],
+        return (
+            ExtractionAttempt(
+                parsed_json=result.parsed_json,
+                validation=ValidationResult(valid=True),
+                output_tokens=result.output_tokens,
+                repaired=False,
+                repair_attempts=0,
+                repair_errors=[],
+            ),
+            [],
+            0,
         )
-    except Exception as exc:
+    except ValueError as exc:
         repair = repair_extraction(
             str(exc),
             schema,
@@ -412,14 +422,18 @@ def _extract_with_repair(
             max_attempts=max_repair_attempts,
         )
         if not repair.valid or repair.repaired_json is None:
-            return None
-        return ExtractionAttempt(
-            parsed_json=repair.repaired_json,
-            validation=ValidationResult(valid=True, repaired=True),
-            output_tokens=repair.output_tokens,
-            repaired=True,
-            repair_attempts=repair.attempts,
-            repair_errors=repair.errors,
+            return (None, repair.errors, repair.attempts)
+        return (
+            ExtractionAttempt(
+                parsed_json=repair.repaired_json,
+                validation=ValidationResult(valid=True, repaired=True),
+                output_tokens=repair.output_tokens,
+                repaired=True,
+                repair_attempts=repair.attempts,
+                repair_errors=repair.errors,
+            ),
+            repair.errors,
+            repair.attempts,
         )
 
 

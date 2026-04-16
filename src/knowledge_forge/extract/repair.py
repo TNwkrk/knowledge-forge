@@ -51,11 +51,12 @@ def repair_extraction(
         )
 
     attempts = 0
+    last_invalid: object = invalid_response
     if attempts < max_attempts:
         attempts += 1
         try:
             result = client.complete(
-                prompt=_build_repair_prompt(original_prompt=original_prompt, invalid_response=invalid_response),
+                prompt=_build_repair_prompt(original_prompt=original_prompt, invalid_response=last_invalid),
                 system=system,
                 model=model,
                 schema=schema,
@@ -73,6 +74,7 @@ def repair_extraction(
                 output_tokens=result.output_tokens,
             )
         except Exception as exc:  # pragma: no cover - behavior asserted via final outcome
+            last_invalid = str(exc)
             errors.append(str(exc))
 
     if attempts < max_attempts:
@@ -80,7 +82,7 @@ def repair_extraction(
         relaxed_schema = relax_schema(schema)
         try:
             result = client.complete(
-                prompt=_build_relaxed_repair_prompt(original_prompt=original_prompt, invalid_response=invalid_response),
+                prompt=_build_relaxed_repair_prompt(original_prompt=original_prompt, invalid_response=last_invalid),
                 system=system,
                 model=model,
                 schema=relaxed_schema,
