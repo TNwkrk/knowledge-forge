@@ -333,20 +333,33 @@ def test_extract_document_loads_sections_and_marks_manifest_extracted(tmp_path: 
 
 def test_section_type_mapping_covers_all_canonical_section_types() -> None:
     assert set(SECTION_RECORD_TYPE_MAP) == {
-        "safety",
-        "installation",
+        "addendum",
+        "bulletin",
+        "checklist",
+        "commissioning",
         "configuration",
-        "startup",
-        "shutdown",
+        "diagram",
+        "drawing",
+        "inspection",
+        "installation",
         "maintenance",
-        "troubleshooting",
-        "specifications",
+        "other",
         "parts",
         "revision_notes",
-        "other",
+        "safety",
+        "seasonal-procedure",
+        "shutdown",
+        "sop",
+        "specifications",
+        "startup",
+        "troubleshooting",
+        "wiring",
+        "workflow",
     }
     assert SECTION_RECORD_TYPE_MAP["maintenance"] == ["procedure", "warning"]
     assert SECTION_RECORD_TYPE_MAP["troubleshooting"] == ["troubleshooting_entry", "alarm_definition"]
+    assert SECTION_RECORD_TYPE_MAP["checklist"] == ["procedure", "warning"]
+    assert SECTION_RECORD_TYPE_MAP["wiring"] == ["applicability"]
 
 
 def test_load_prompt_template_reads_yaml_template() -> None:
