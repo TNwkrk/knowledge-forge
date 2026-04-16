@@ -426,7 +426,7 @@ def compile_source_pages(doc_id: str | None, compile_all: bool) -> None:
     if compile_all:
         try:
             pages = compile_all_source_pages(data_dir=data_dir)
-        except FileNotFoundError as exc:
+        except (FileNotFoundError, ValueError, KeyError) as exc:
             raise click.ClickException(str(exc)) from exc
         if not pages:
             click.echo("No extracted manifests found.")
@@ -438,7 +438,7 @@ def compile_source_pages(doc_id: str | None, compile_all: bool) -> None:
 
     try:
         page = compile_source_page(doc_id, data_dir=data_dir)
-    except FileNotFoundError as exc:
+    except (FileNotFoundError, ValueError, KeyError) as exc:
         raise click.ClickException(str(exc)) from exc
 
     click.echo(f"Compiled source page for {doc_id}")

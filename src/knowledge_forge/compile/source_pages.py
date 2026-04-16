@@ -14,7 +14,7 @@ from yaml import safe_dump
 from knowledge_forge.extract.engine import load_sections
 from knowledge_forge.extract.schemas import ExtractionSchemaModel, get_schema_model
 from knowledge_forge.intake.importer import get_data_dir, list_manifests, load_manifest
-from knowledge_forge.intake.manifest import DocumentStatus, ManifestEntry, slugify
+from knowledge_forge.intake.manifest import STATUS_ORDER, DocumentStatus, ManifestEntry, slugify
 from knowledge_forge.parse.sectioning import Section
 
 COMPILATION_VERSION = "source-pages-v1"
@@ -75,8 +75,8 @@ def compile_source_page(doc_id: str, *, data_dir: Path | None = None) -> Compile
     extracted_records = _load_extracted_records(doc_id, data_dir=resolved_data_dir)
     review_flags = _load_review_flags(doc_id, data_dir=resolved_data_dir)
 
-    if not extracted_records:
-        raise FileNotFoundError(f"extracted records not found for doc_id '{doc_id}'")
+    if not extracted_records and not review_flags:
+        raise FileNotFoundError(f"no extracted records or review flags found for doc_id '{doc_id}'")
 
     generated_at = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
     section_counts = _count_records_by_section(sections, extracted_records)
@@ -154,7 +154,7 @@ def _build_frontmatter(
         "doc_id": manifest.doc_id,
         "document_type": document.document_type,
         "models": document.model_applicability,
-        "status": document.status.value,
+        "status": DocumentStatus.COMPILED.value,
     }
 
 
@@ -186,7 +186,7 @@ def _render_content(
         f"- Revision: {document.revision}",
         f"- Publication date: {document.publication_date.isoformat() if document.publication_date else 'unknown'}",
         f"- Language: {document.language}",
-        f"- Pipeline status: `{document.status.value}`",
+        f"- Pipeline status: `{DocumentStatus.COMPILED.value}`",
         "",
         "## Section Index",
         "",
@@ -220,7 +220,12 @@ def _render_content(
             "",
         ]
     )
-    quality_lines = _render_quality_notes(review_flags=review_flags, extracted_records=extracted_records)
+    low_confidence_threshold = min((flag.min_confidence for flag in review_flags), default=0.75)
+    quality_lines = _render_quality_notes(
+        review_flags=review_flags,
+        extracted_records=extracted_records,
+        low_confidence_threshold=low_confidence_threshold,
+    )
     lines.extend(quality_lines)
 
     lines.extend(
@@ -279,18 +284,19 @@ def _render_quality_notes(
     *,
     review_flags: list[ReviewFlag],
     extracted_records: list[tuple[str, Path, ExtractionSchemaModel]],
+    low_confidence_threshold: float = 0.75,
 ) -> list[str]:
     low_confidence_rows = [
         (record_type, record_path.stem, record.confidence)
         for record_type, record_path, record in extracted_records
-        if record.confidence < 0.75
+        if record.confidence < low_confidence_threshold
     ]
     lines: list[str] = []
     if not low_confidence_rows and not review_flags:
         return ["- No low-confidence or flagged extractions."]
 
     if low_confidence_rows:
-        lines.append("- Low-confidence records:")
+        lines.append(f"- Low-confidence records (threshold: {low_confidence_threshold:.2f}):")
         for record_type, record_id, confidence in low_confidence_rows:
             lines.append(f"  - `{record_type}` `{record_id}` at confidence {confidence:.3f}")
 
@@ -314,7 +320,7 @@ def _load_extracted_records(
 ) -> list[tuple[str, Path, ExtractionSchemaModel]]:
     extracted_dir = data_dir / "extracted" / doc_id
     if not extracted_dir.exists():
-        raise FileNotFoundError(f"extracted records not found for doc_id '{doc_id}'")
+        return []
 
     records: list[tuple[str, Path, ExtractionSchemaModel]] = []
     for record_dir in sorted(path for path in extracted_dir.iterdir() if path.is_dir() and path.name != "reviews"):
@@ -367,6 +373,8 @@ def _anchor(title: str) -> str:
 
 
 def _mark_manifest_compiled(manifest: ManifestEntry, *, data_dir: Path) -> None:
+    if STATUS_ORDER.index(manifest.document.status) >= STATUS_ORDER.index(DocumentStatus.COMPILED):
+        return
     manifest_path = data_dir / "manifests" / f"{manifest.doc_id}.yaml"
     updated = manifest.transition_status(DocumentStatus.COMPILED, reason="source page compiled")
     manifest_path.write_text(updated.to_yaml(), encoding="utf-8")

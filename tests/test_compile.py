@@ -190,7 +190,7 @@ def test_compile_source_page_renders_frontmatter_sections_summary_and_quality_no
     assert "[Startup Procedure](#startup-procedure)" in rendered
     assert "`procedure`: 1" in rendered
     assert "`warning`: 1" in rendered
-    assert "Low-confidence records:" in rendered
+    assert "Low-confidence records (threshold: 0.80):" in rendered
     assert "Review flags:" in rendered
     assert "schema repair applied" in rendered
     assert "## Provenance Chain" in rendered
