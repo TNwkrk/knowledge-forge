@@ -29,6 +29,7 @@ from knowledge_forge.intake.importer import (
 from knowledge_forge.intake.manifest import CANONICAL_DOCUMENT_TYPE_VALUES, DOCUMENT_CLASS_VALUES
 from knowledge_forge.normalize import inspect_normalization, normalize_document
 from knowledge_forge.parse import parse_document, score_parse, section_document
+from knowledge_forge.publish import validate_publish_output
 
 
 @click.group(help="Knowledge Forge command line interface.")
@@ -49,6 +50,11 @@ def inference() -> None:
 @cli.group(help="Compile reviewable knowledge artifacts from extracted records.")
 def compile() -> None:
     """Compilation command group."""
+
+
+@cli.group(help="Stage and validate publish-ready FlowCommander handoff output.")
+def publish() -> None:
+    """Publish command group."""
 
 
 @intake.command("register")
@@ -558,6 +564,26 @@ def compile_overviews(target: str | None, compile_all: bool, manufacturer_only: 
     descriptor = "manufacturer index" if manufacturer_only else "family overview"
     click.echo(f"Compiled {descriptor} for {target}")
     click.echo(f"Output: {page.output_path}")
+
+
+@publish.command("validate")
+@click.argument("publish_run_id", type=str)
+def publish_validate(publish_run_id: str) -> None:
+    """Validate one staged publish run against the publish contract."""
+    stage_dir = get_data_dir() / "publish" / publish_run_id
+    report = validate_publish_output(stage_dir)
+    click.echo(f"Publish run: {publish_run_id}")
+    click.echo(f"Stage dir: {stage_dir}")
+    click.echo(f"Valid: {'yes' if report.valid else 'no'}")
+    if report.warnings:
+        click.echo("WARNINGS")
+        for warning in report.warnings:
+            click.echo(f"- {warning}")
+    if report.errors:
+        click.echo("ERRORS")
+        for error in report.errors:
+            click.echo(f"- {error}")
+        raise click.ClickException(f"publish validation failed for {publish_run_id}")
 
 
 @inference.command("costs")
