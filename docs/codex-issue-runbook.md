@@ -22,7 +22,9 @@ Use this runbook when Codex works a single roadmap issue in Knowledge Forge.
 5. Update docs when behavior, structure, boundaries, or acceptance criteria
    changed.
 6. Run the relevant validation and report exactly what was run.
-7. Open a PR against the default branch with scope, validation, and out-of-scope
+7. In the final report, include the `AGENTS.md` FlowCommander repo-wiki `yes` /
+   `no` determination.
+8. Open a PR against the default branch with scope, validation, and out-of-scope
    notes.
 
 ## Validation expectations
