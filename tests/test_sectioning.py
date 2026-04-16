@@ -609,6 +609,86 @@ def test_section_all_documents_skips_incomplete_parsed_artifacts(tmp_path: Path)
     assert [section.doc_id for section in result[0]] == [complete_doc]
 
 
+def test_section_document_falls_back_to_default_context_when_manifest_missing(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    doc_id = _register_parsed_fixture(data_dir, _write_pdf(tmp_path / "no-manifest.pdf"), revision="Rev NM")
+    structure = {
+        "doc_id": doc_id,
+        "parser": "docling",
+        "parser_version": "test",
+        "page_count": 1,
+        "texts": [
+            {"item_ref": "#/texts/0", "label": "title", "text": "Orphan Notes", "page_numbers": [1]},
+            {"item_ref": "#/texts/1", "label": "section_header", "text": "Safety", "page_numbers": [1]},
+            {"item_ref": "#/texts/2", "label": "text", "text": "Wear PPE.", "page_numbers": [1]},
+        ],
+        "tables": [],
+        "pages": [{"page_number": 1, "width": 612, "height": 792, "source_ref": "p1"}],
+    }
+    headings = {
+        "doc_id": doc_id,
+        "headings": [
+            {
+                "title": "Orphan Notes",
+                "label": "title",
+                "level": 1,
+                "page_number": 1,
+                "item_ref": "#/texts/0",
+                "children": [
+                    {
+                        "title": "Safety",
+                        "label": "section_header",
+                        "level": 2,
+                        "page_number": 1,
+                        "item_ref": "#/texts/1",
+                        "children": [],
+                    }
+                ],
+            }
+        ],
+    }
+    _write_parsed_artifacts(data_dir, doc_id=doc_id, structure=structure, headings=headings)
+    (data_dir / "manifests" / f"{doc_id}.yaml").unlink()
+
+    sections = section_document(doc_id, data_dir=data_dir)
+
+    assert len(sections) == 1
+    assert sections[0].section_type == "safety"
+
+
+def test_section_document_headingless_sop_extracts_steps(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    doc_id = _register_parsed_fixture(
+        data_dir,
+        _write_pdf(tmp_path / "headingless-sop.pdf"),
+        revision="Rev SOP2",
+        document_type="SOP",
+        document_class="operational",
+    )
+    structure = {
+        "doc_id": doc_id,
+        "parser": "docling",
+        "parser_version": "test",
+        "page_count": 1,
+        "texts": [
+            {"item_ref": "#/texts/0", "label": "title", "text": "Lockout Procedure", "page_numbers": [1]},
+            {"item_ref": "#/texts/1", "label": "list_item", "text": "1. Isolate power.", "page_numbers": [1]},
+            {"item_ref": "#/texts/2", "label": "list_item", "text": "2. Apply lockout tag.", "page_numbers": [1]},
+        ],
+        "tables": [],
+        "pages": [{"page_number": 1, "width": 612, "height": 792, "source_ref": "p1"}],
+    }
+    headings = {"doc_id": doc_id, "headings": []}
+    _write_parsed_artifacts(data_dir, doc_id=doc_id, structure=structure, headings=headings)
+
+    sections = section_document(doc_id, data_dir=data_dir)
+
+    assert len(sections) == 1
+    # "Lockout Procedure" title matches "procedure" keyword → classified as workflow (not other)
+    assert sections[0].section_type == "workflow"
+    assert [step.text for step in sections[0].ordered_steps] == ["Isolate power.", "Apply lockout tag."]
+
+
 def test_section_cli_supports_doc_id_and_all(monkeypatch, tmp_path: Path) -> None:
     data_dir = tmp_path / "data"
     first_doc_id = _register_parsed_fixture(data_dir, _write_pdf(tmp_path / "first.pdf"))

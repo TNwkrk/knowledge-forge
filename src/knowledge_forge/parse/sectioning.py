@@ -204,16 +204,20 @@ def section_document(doc_id: str, *, data_dir: Path | None = None) -> list[Secti
 
     structure = StructuredParseArtifact.model_validate_json(structure_path.read_text(encoding="utf-8"))
     heading_tree = HeadingTreeArtifact.model_validate_json(headings_path.read_text(encoding="utf-8"))
-    manifest = load_manifest(resolved_data_dir, doc_id)
+    try:
+        manifest = load_manifest(resolved_data_dir, doc_id)
+        context = _SectionContext(
+            document_type=manifest.document.document_type,
+            document_class=manifest.document.document_class,
+        )
+    except FileNotFoundError:
+        context = _SectionContext()
 
     sections = _build_sections(
         doc_id=doc_id,
         structure=structure,
         heading_tree=heading_tree,
-        context=_SectionContext(
-            document_type=manifest.document.document_type,
-            document_class=manifest.document.document_class,
-        ),
+        context=context,
     )
     _persist_sections(sections, resolved_data_dir)
     return sections
@@ -296,19 +300,20 @@ def _draft_sections(
         body_items = structure.texts
         tables = list(structure.tables)
         content = _render_section_content(title=None, body_items=body_items, tables=tables)
+        section_type = _classify_section(title, content, heading_path=(title,), context=context)
         drafts.append(
             _DraftSection(
                 title=title,
                 heading_path=(title,),
                 parent_item_ref=None,
-                section_type=_classify_section(title, content, heading_path=(title,), context=context),
+                section_type=section_type,
                 content=content,
                 page_range=_page_range_for_items(body_items, tables),
-                ordered_steps=_extract_ordered_steps(body_items, section_type="other", context=context),
+                ordered_steps=_extract_ordered_steps(body_items, section_type=section_type, context=context),
                 figure_regions=_extract_figure_regions(
                     title=title,
                     body_items=body_items,
-                    section_type="other",
+                    section_type=section_type,
                 ),
             )
         )
