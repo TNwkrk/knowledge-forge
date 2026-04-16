@@ -17,7 +17,7 @@ from knowledge_forge.extract.engine import (
     load_prompt_template,
 )
 from knowledge_forge.intake.importer import RegistrationRequest, load_manifest, register_document
-from knowledge_forge.intake.manifest import DocumentStatus
+from knowledge_forge.intake.manifest import BucketAssignment, DocumentStatus
 from knowledge_forge.parse.sectioning import Section
 
 
@@ -48,6 +48,50 @@ def _write_pdf(path: Path) -> Path:
 def _write_section(path: Path, section: Section) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(section.model_dump_json(indent=2), encoding="utf-8")
+
+
+def _write_parse_meta(data_dir: Path, doc_id: str, *, parser_version: str = "docling-9.9.9") -> None:
+    meta_path = data_dir / "parsed" / doc_id / "meta.json"
+    meta_path.parent.mkdir(parents=True, exist_ok=True)
+    meta_path.write_text(
+        json.dumps(
+            {
+                "doc_id": doc_id,
+                "parser": "docling",
+                "parser_version": parser_version,
+                "processed_at": "2026-04-16T00:00:00Z",
+                "processing_time_seconds": 1.2,
+                "page_count": 99,
+                "status": "success",
+                "input_path": str(data_dir / "normalized" / f"{doc_id}.pdf"),
+                "input_checksum": "a" * 64,
+                "document_hash": None,
+                "timings": {},
+                "confidence": None,
+                "errors": [],
+            },
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+
+
+def _write_bucket_assignments(data_dir: Path, doc_id: str) -> None:
+    manifest_path = data_dir / "manifests" / f"{doc_id}.yaml"
+    manifest = load_manifest(data_dir, doc_id)
+    updated_manifest = manifest.model_copy(
+        update={
+            "bucket_assignments": [
+                BucketAssignment(
+                    doc_id=doc_id,
+                    bucket_id="honeywell/dc1000/family",
+                    dimension="family",
+                    value="DC1000",
+                )
+            ]
+        }
+    )
+    manifest_path.write_text(updated_manifest.to_yaml(), encoding="utf-8")
 
 
 def _base_record() -> dict[str, object]:
@@ -160,9 +204,12 @@ class _SequentialFakeClient:
 
 def test_extract_section_builds_prompt_parses_records_and_writes_files(tmp_path: Path) -> None:
     data_dir = tmp_path / "data"
+    doc_id = _register_parsed_fixture(_write_pdf(tmp_path / "manual.pdf"), data_dir)
+    _write_parse_meta(data_dir, doc_id)
+    _write_bucket_assignments(data_dir, doc_id)
     section = Section(
-        doc_id="honeywell-dc1000-service-manual-rev3",
-        section_id="honeywell-dc1000-service-manual-rev3--startup--001",
+        doc_id=doc_id,
+        section_id=f"{doc_id}--startup--001",
         section_type="startup",
         title="Startup Procedure",
         content="1. Verify the discharge valve is open.\n2. Apply control power.",
@@ -229,13 +276,22 @@ def test_extract_section_builds_prompt_parses_records_and_writes_files(tmp_path:
     )
     assert procedure_path.exists()
     assert warning_path.exists()
-    assert json.loads(procedure_path.read_text(encoding="utf-8"))["title"] == "Start the controller"
-    assert json.loads(warning_path.read_text(encoding="utf-8"))["severity"] == "warning"
+    procedure_payload = json.loads(procedure_path.read_text(encoding="utf-8"))
+    warning_payload = json.loads(warning_path.read_text(encoding="utf-8"))
+    assert procedure_payload["title"] == "Start the controller"
+    assert warning_payload["severity"] == "warning"
+    assert procedure_payload["parser_version"] == "docling-9.9.9"
+    assert procedure_payload["extraction_version"] == "extraction/procedure@v1:gpt-4o-mini"
+    assert procedure_payload["source_doc_id"] == doc_id
+    assert procedure_payload["steps"][0]["parser_version"] == "docling-9.9.9"
+    assert warning_payload["bucket_context"][0]["bucket_id"] == "honeywell/dc1000/family"
 
 
 def test_extract_document_loads_sections_and_marks_manifest_extracted(tmp_path: Path) -> None:
     data_dir = tmp_path / "data"
     doc_id = _register_parsed_fixture(_write_pdf(tmp_path / "manual.pdf"), data_dir)
+    _write_parse_meta(data_dir, doc_id, parser_version="docling-1.2.0")
+    _write_bucket_assignments(data_dir, doc_id)
     section = Section(
         doc_id=doc_id,
         section_id=f"{doc_id}--specifications--001",
@@ -268,6 +324,11 @@ def test_extract_document_loads_sections_and_marks_manifest_extracted(tmp_path: 
     assert len(records) == 1
     manifest = load_manifest(data_dir, doc_id)
     assert manifest.document.status == DocumentStatus.EXTRACTED
+    record_path = data_dir / "extracted" / doc_id / "spec_value" / f"{section.section_id}--spec_value--001.json"
+    payload = json.loads(record_path.read_text(encoding="utf-8"))
+    assert payload["parameter"] == "Supply voltage"
+    assert payload["parser_version"] == "docling-1.2.0"
+    assert payload["bucket_context"][0]["value"] == "DC1000"
 
 
 def test_section_type_mapping_covers_all_canonical_section_types() -> None:
@@ -383,9 +444,12 @@ def test_extract_cli_supports_document_and_single_section(monkeypatch, tmp_path:
 
 def test_extract_section_flags_low_confidence_records_for_review(tmp_path: Path) -> None:
     data_dir = tmp_path / "data"
+    doc_id = _register_parsed_fixture(_write_pdf(tmp_path / "manual.pdf"), data_dir)
+    _write_parse_meta(data_dir, doc_id)
+    _write_bucket_assignments(data_dir, doc_id)
     section = Section(
-        doc_id="honeywell-dc1000-service-manual-rev3",
-        section_id="honeywell-dc1000-service-manual-rev3--startup--001",
+        doc_id=doc_id,
+        section_id=f"{doc_id}--startup--001",
         section_type="startup",
         title="Startup Procedure",
         content="1. Verify the discharge valve is open.\n2. Apply control power.",
@@ -438,9 +502,12 @@ def test_extract_section_flags_low_confidence_records_for_review(tmp_path: Path)
 
 def test_extract_section_flags_unrepairable_response_for_review(tmp_path: Path) -> None:
     data_dir = tmp_path / "data"
+    doc_id = _register_parsed_fixture(_write_pdf(tmp_path / "manual.pdf"), data_dir)
+    _write_parse_meta(data_dir, doc_id)
+    _write_bucket_assignments(data_dir, doc_id)
     section = Section(
-        doc_id="honeywell-dc1000-service-manual-rev3",
-        section_id="honeywell-dc1000-service-manual-rev3--specifications--001",
+        doc_id=doc_id,
+        section_id=f"{doc_id}--specifications--001",
         section_type="specifications",
         title="Electrical Specifications",
         content="Supply voltage: 24 VDC",
@@ -460,9 +527,12 @@ def test_extract_section_flags_unrepairable_response_for_review(tmp_path: Path) 
 
 def test_extract_section_succeeds_after_repair(tmp_path: Path) -> None:
     data_dir = tmp_path / "data"
+    doc_id = _register_parsed_fixture(_write_pdf(tmp_path / "manual.pdf"), data_dir)
+    _write_parse_meta(data_dir, doc_id)
+    _write_bucket_assignments(data_dir, doc_id)
     section = Section(
-        doc_id="honeywell-dc1000-service-manual-rev3",
-        section_id="honeywell-dc1000-service-manual-rev3--specifications--001",
+        doc_id=doc_id,
+        section_id=f"{doc_id}--specifications--001",
         section_type="specifications",
         title="Electrical Specifications",
         content="Supply voltage: 24 VDC",
@@ -471,7 +541,7 @@ def test_extract_section_succeeds_after_repair(tmp_path: Path) -> None:
     )
     valid_spec = {
         **_base_record(),
-        "source_doc_id": "honeywell-dc1000-service-manual-rev3",
+        "source_doc_id": doc_id,
         "source_heading": "Electrical Specifications",
         "parameter": "Supply voltage",
         "value": "24",

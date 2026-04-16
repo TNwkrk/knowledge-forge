@@ -8,7 +8,7 @@ from pathlib import Path
 import click
 
 from knowledge_forge.bucketing.assigner import bucket_manifest, bucket_unassigned_manifests
-from knowledge_forge.extract import extract_document
+from knowledge_forge.extract import audit_document_provenance, extract_document
 from knowledge_forge.inference import InferenceConfig, aggregate_costs, ingest_results, poll_batch
 from knowledge_forge.intake.importer import (
     RegistrationRequest,
@@ -327,7 +327,7 @@ def section(doc_id: str | None, section_all: bool) -> None:
 
 
 @cli.command("extract")
-@click.argument("doc_id", type=str)
+@click.argument("args", nargs=-1, type=str)
 @click.option("--section", "section_id", type=str, help="Extract only one section from the document.")
 @click.option(
     "--min-confidence",
@@ -352,9 +352,21 @@ def section(doc_id: str | None, section_all: bool) -> None:
     help="Inference configuration file.",
 )
 def extract(
-    doc_id: str, section_id: str | None, min_confidence: float, max_repair_attempts: int, config_path: Path
+    args: tuple[str, ...], section_id: str | None, min_confidence: float, max_repair_attempts: int, config_path: Path
 ) -> None:
     """Extract structured records from canonical sections."""
+    if args[:1] == ("provenance",):
+        if len(args) != 2:
+            raise click.ClickException("pass a doc_id to extract provenance")
+        if section_id is not None:
+            raise click.ClickException("extract provenance does not support --section")
+        _extract_provenance(args[1])
+        return
+
+    if len(args) != 1:
+        raise click.ClickException("pass a doc_id or use 'extract provenance <doc_id>'")
+    doc_id = args[0]
+
     try:
         config = InferenceConfig.load(config_path)
         records = extract_document(
@@ -374,6 +386,24 @@ def extract(
     if min_confidence > 0:
         click.echo(f"Review threshold: {min_confidence:.2f}")
     click.echo(f"Output dir: {get_data_dir() / 'extracted' / doc_id}")
+
+
+def _extract_provenance(doc_id: str) -> None:
+    try:
+        report = audit_document_provenance(doc_id, data_dir=get_data_dir())
+    except FileNotFoundError as exc:
+        raise click.ClickException(str(exc)) from exc
+
+    click.echo(f"Document: {report.doc_id}")
+    click.echo(f"Total records: {report.total_records}")
+    click.echo(f"Valid provenance: {report.valid_records}")
+    click.echo(f"Invalid provenance: {report.invalid_records}")
+    if report.invalid_records:
+        click.echo("INVALID RECORDS")
+        for row in report.rows:
+            if row.valid:
+                continue
+            click.echo(f"{row.record_type}\t{row.record_id}\t{'; '.join(row.errors)}")
 
 
 @inference.command("costs")
