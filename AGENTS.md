@@ -33,6 +33,8 @@ Primary priorities:
   and rerun safety.
 - Do not directly edit FlowCommander `repo-wiki` as an ad hoc side effect of
   normal Knowledge Forge work. Publication happens through a controlled PR flow.
+- During normal Knowledge Forge issue execution, do not make FlowCommander
+  `repo-wiki` changes unless explicitly instructed.
 
 ## FlowCommander Integration Boundary
 - FlowCommander is the downstream product and integration repo.
@@ -160,8 +162,23 @@ Final reports should include:
 - repo docs updates
 - tests or validation run
 - review findings
+- separate FlowCommander repo-wiki update likely needed: `yes` or `no`
 - remaining risks
 - PR status or next action
+
+For meaningful Knowledge Forge changes, the final report must state whether a
+separate FlowCommander repo-wiki update is likely needed.
+- Mark it `yes` only when the change affects the Knowledge Forge ->
+  FlowCommander boundary, including:
+  - publish contract changes
+  - repo structure or artifact flow changes that affect FlowCommander handoff
+  - wiki output structure changes under `repo-wiki/knowledge/`
+  - review or approval workflow changes for published knowledge
+  - provenance, contradiction, or supersession behavior changes
+  - roadmap or execution changes that materially affect the integration boundary
+- If `yes`, briefly state what should likely be updated in FlowCommander
+  `repo-wiki` and why.
+- If `no`, briefly state why no downstream durable knowledge changed.
 
 For common task types, keep the finish line explicit:
 - feature work: state the roadmap phase and artifact boundary respected
