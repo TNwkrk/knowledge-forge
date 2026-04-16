@@ -17,12 +17,17 @@ validation.
 - tiny sample manifests, parsed sections, or normalized text fragments
 - stable expected JSON, YAML, or Markdown outputs
 - regression cases for previously fixed parsing or extraction behavior
+- representative samples from multiple document types (not just manuals) —
+  include at least one SOP/checklist, one datasheet, and one service bulletin
+  fixture when those source families are supported
 
 ## What does not belong here yet
 
 - large raw manual corpora
 - ad hoc local experiments that are not part of a repeatable test
 - performance benchmarking infrastructure
+- fixtures for source families not yet supported by the pipeline (config
+  backups, telemetry exports, multimedia)
 
 ## Ratcheting guidance
 
