@@ -10,6 +10,7 @@ from pathlib import Path
 
 from yaml import safe_load
 
+from knowledge_forge.compile.contradiction_notes import render_inline_contradiction_notes
 from knowledge_forge.compile.source_pages import (
     GENERATED_BY,
     PUBLISH_RUN_PLACEHOLDER,
@@ -138,9 +139,11 @@ def compile_topic_page(
         "topic": topic,
     }
     content = _render_content(
+        bucket_id=bucket_id,
         topic=topic,
         llm_markdown=result.response_text,
         records=topic_records,
+        data_dir=resolved_data_dir,
     )
     page = CompiledPage(
         output_path=output_path,
@@ -292,11 +295,22 @@ def applicability_text(applicability: Applicability | None) -> str | None:
     return "; ".join(details)
 
 
-def _render_content(*, topic: str, llm_markdown: str, records: list[TopicRecord]) -> str:
+def _render_content(
+    *,
+    bucket_id: str,
+    topic: str,
+    llm_markdown: str,
+    records: list[TopicRecord],
+    data_dir: Path,
+) -> str:
     summary_lines = _normalize_llm_markdown(llm_markdown)
     cited_claims = _render_claims(records)
     applicability_notes = _render_applicability_notes(records)
-    contradiction_notes = _render_contradiction_notes(records)
+    contradiction_notes = render_inline_contradiction_notes(
+        bucket_id,
+        record_ids={entry.record_path.stem for entry in records},
+        data_dir=data_dir,
+    )
 
     lines = [f"# {TOPIC_TITLES[topic]}", ""]
     if summary_lines:
@@ -373,25 +387,6 @@ def _render_applicability_notes(records: list[TopicRecord]) -> list[str]:
     return [
         f"- {applicability} ({', '.join(sorted(set(citations)))})" for applicability, citations in sorted(seen.items())
     ]
-
-
-def _render_contradiction_notes(records: list[TopicRecord]) -> list[str]:
-    grouped: dict[str, list[TopicRecord]] = {}
-    for entry in records:
-        key = _contradiction_key(entry)
-        if key is None:
-            continue
-        grouped.setdefault(key, []).append(entry)
-
-    notes: list[str] = []
-    for key, entries in sorted(grouped.items()):
-        signatures = {_contradiction_signature(entry) for entry in entries}
-        if len(signatures) <= 1:
-            continue
-        notes.append(f"- Conflicting claims for `{key}`:")
-        for entry in entries:
-            notes.append(f"  - {_prompt_claim(entry)} {entry.citation}")
-    return notes
 
 
 def _build_title(records: list[TopicRecord], topic: str) -> str:
@@ -480,32 +475,6 @@ def _extract_applicability(record: ExtractionSchemaModel) -> Applicability | Non
     if isinstance(record, (Procedure, SpecValue)):
         return record.applicability
     return None
-
-
-def _contradiction_key(entry: TopicRecord) -> str | None:
-    record = entry.record
-    if isinstance(record, SpecValue):
-        return record.parameter.casefold()
-    if isinstance(record, AlarmDefinition):
-        return record.code.casefold()
-    if isinstance(record, TroubleshootingEntry):
-        return record.symptom.casefold()
-    if isinstance(record, Procedure):
-        return slugify(record.title)
-    return None
-
-
-def _contradiction_signature(entry: TopicRecord) -> str:
-    record = entry.record
-    if isinstance(record, Procedure):
-        return "|".join(step.instruction for step in record.steps)
-    if isinstance(record, SpecValue):
-        return "|".join(part for part in (record.value, record.unit or "", record.conditions or "") if part)
-    if isinstance(record, AlarmDefinition):
-        return "|".join((record.description, record.cause, record.remedy, record.severity))
-    if isinstance(record, TroubleshootingEntry):
-        return "|".join((entry.record.symptom, *record.possible_causes, *record.remedies))
-    return entry.record.model_dump_json()
 
 
 def _prompt_claim(entry: TopicRecord) -> str:
