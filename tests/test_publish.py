@@ -341,7 +341,7 @@ def test_validate_rejects_manifest_paths_with_dotdot_segments(tmp_path: Path) ->
     report = validate_publish_output(stage_dir)
 
     assert report.valid is False
-    assert any("must not contain .." in error for error in report.errors)
+    assert any("must not contain .. segments" in error for error in report.errors)
 
 
 def test_load_frontmatter_accepts_crlf_newlines(tmp_path: Path) -> None:
