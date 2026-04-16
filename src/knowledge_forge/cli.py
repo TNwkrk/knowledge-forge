@@ -19,7 +19,7 @@ from knowledge_forge.compile import (
     compile_manufacturer_index,
     compile_source_page,
 )
-from knowledge_forge.extract import audit_document_provenance, extract_document
+from knowledge_forge.extract import analyze_contradictions, audit_document_provenance, extract_document
 from knowledge_forge.inference import InferenceClient, InferenceConfig, aggregate_costs, ingest_results, poll_batch
 from knowledge_forge.intake.importer import (
     RegistrationRequest,
@@ -57,6 +57,11 @@ def compile() -> None:
 @cli.group(help="Stage and validate publish-ready FlowCommander handoff output.")
 def publish() -> None:
     """Publish command group."""
+
+
+@cli.group(help="Analyze extracted records for bucket-scoped contradictions and supersession.")
+def analyze() -> None:
+    """Analysis command group."""
 
 
 @intake.command("register")
@@ -633,6 +638,49 @@ def publish_pr(publish_run_id: str, target_repo: str, dry_run: bool, target_repo
         return
 
     click.echo(f"PR: {result.pr_url}")
+
+
+@analyze.command("contradictions")
+@click.argument("bucket_id", type=str)
+@click.option(
+    "--config",
+    "config_path",
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    help="Optional inference config file used for fuzzy LLM-assisted comparison.",
+)
+def analyze_contradictions_command(bucket_id: str, config_path: Path | None) -> None:
+    """Analyze one bucket for contradiction and supersession candidates."""
+    client: InferenceClient | None = None
+    if config_path is not None:
+        try:
+            config = InferenceConfig.load(config_path)
+            client = InferenceClient(config, data_dir=get_data_dir())
+        except (FileNotFoundError, ValueError) as exc:
+            raise click.ClickException(str(exc)) from exc
+
+    try:
+        report = analyze_contradictions(bucket_id, client=client, data_dir=get_data_dir())
+    except (FileNotFoundError, ValueError, KeyError) as exc:
+        raise click.ClickException(str(exc)) from exc
+
+    click.echo(f"Bucket: {bucket_id}")
+    click.echo(f"Contradictions: {len(report.contradictions)}")
+    click.echo(f"Supersessions: {len(report.supersessions)}")
+
+    if report.contradictions:
+        click.echo("CONTRADICTIONS")
+        for candidate in report.contradictions:
+            click.echo(
+                f"{candidate.record_ids[0]}\t{candidate.record_ids[1]}\t"
+                f"{candidate.conflicting_claim}\t{candidate.review_status}"
+            )
+
+    if report.supersessions:
+        click.echo("SUPERSESSIONS")
+        for candidate in report.supersessions:
+            click.echo(
+                f"{candidate.superseding_record_id}\t{candidate.superseded_record_id}\t{candidate.precedence_basis}"
+            )
 
 
 @inference.command("costs")

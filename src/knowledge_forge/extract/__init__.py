@@ -1,5 +1,10 @@
 """Extraction package."""
 
+from knowledge_forge.extract.contradiction import (
+    ContradictionAnalysisReport,
+    analyze_contradictions,
+    find_contradiction_candidates,
+)
 from knowledge_forge.extract.engine import (
     SECTION_RECORD_TYPE_MAP,
     ExtractedRecord,
@@ -46,6 +51,8 @@ __all__ = [
     "Applicability",
     "BucketContext",
     "ContradictionCandidate",
+    "ContradictionAnalysisReport",
+    "analyze_contradictions",
     "attach_provenance",
     "audit_document_provenance",
     "extract_document",
@@ -56,6 +63,7 @@ __all__ = [
     "get_json_schema",
     "get_schema_model",
     "JSON_SCHEMA_REGISTRY",
+    "find_contradiction_candidates",
     "load_prompt_template",
     "load_bucket_context",
     "load_parse_metadata",
