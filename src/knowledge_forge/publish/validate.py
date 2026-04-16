@@ -8,7 +8,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from yaml import YAMLError, safe_load
 
 from knowledge_forge.intake.manifest import slugify
-from knowledge_forge.publish.stage import PublishManifest
+from knowledge_forge.publish.manifest import PublishManifest
 
 ALLOWED_TARGET_DIRECTORIES = frozenset(
     {

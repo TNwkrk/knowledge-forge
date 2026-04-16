@@ -14,7 +14,7 @@ from urllib import request
 from pydantic import BaseModel, ConfigDict
 
 from knowledge_forge.intake.importer import get_data_dir
-from knowledge_forge.publish.stage import PublishManifest
+from knowledge_forge.publish.manifest import PublishManifest, load_publish_manifest
 from knowledge_forge.publish.validate import ValidationReport, validate_publish_output
 
 DEFAULT_TARGET_REPO = "TNwkrk/FlowCommander"
@@ -123,7 +123,7 @@ def create_publish_pr(
     if not report.valid:
         raise ValueError(f"publish validation failed for {publish_run_id}: {'; '.join(report.errors)}")
 
-    manifest = _load_publish_manifest(publish_root, publish_run_id)
+    manifest = load_publish_manifest(stage_dir, publish_run_id)
     run_git = git_runner or _run_git
     repo_path = _prepare_target_repo(
         publish_run_id,
@@ -201,13 +201,6 @@ def create_publish_pr(
         dry_run=False,
         target_repo_path=repo_path,
     )
-
-
-def _load_publish_manifest(publish_root: Path, publish_run_id: str) -> PublishManifest:
-    manifest_path = publish_root / "_manifests" / f"{publish_run_id}.json"
-    if not manifest_path.exists():
-        raise FileNotFoundError(f"publish manifest not found for {publish_run_id}: {manifest_path}")
-    return PublishManifest.model_validate_json(manifest_path.read_text(encoding="utf-8"))
 
 
 def _prepare_target_repo(

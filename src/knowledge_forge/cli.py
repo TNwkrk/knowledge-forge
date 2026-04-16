@@ -31,7 +31,7 @@ from knowledge_forge.intake.importer import (
 from knowledge_forge.intake.manifest import CANONICAL_DOCUMENT_TYPE_VALUES, DOCUMENT_CLASS_VALUES
 from knowledge_forge.normalize import inspect_normalization, normalize_document
 from knowledge_forge.parse import parse_document, score_parse, section_document
-from knowledge_forge.publish import create_publish_pr, validate_publish_output
+from knowledge_forge.publish import create_publish_pr, list_publish_runs, load_publish_manifest, validate_publish_output
 
 
 @click.group(help="Knowledge Forge command line interface.")
@@ -591,6 +591,53 @@ def publish_validate(publish_run_id: str) -> None:
         for error in report.errors:
             click.echo(f"- {error}")
         raise click.ClickException(f"publish validation failed for {publish_run_id}")
+
+
+@publish.command("log")
+@click.option(
+    "--validate",
+    is_flag=True,
+    default=False,
+    help="Run full publish-contract validation for each run (slower; reports 'valid'/'invalid' instead of 'ready').",
+)
+def publish_log(validate: bool) -> None:
+    """List staged publish runs and their current validation status."""
+    runs = list_publish_runs(get_data_dir(), validate=validate)
+    if not runs:
+        click.echo("No publish runs found.")
+        return
+
+    click.echo("RUN ID\tSTATUS\tGENERATED AT\tSTAGE DIR")
+    for run in runs:
+        click.echo(f"{run.publish_run_id}\t{run.status}\t{run.generated_at or '-'}\t{run.stage_dir}")
+
+
+@publish.command("inspect")
+@click.argument("publish_run_id", type=str)
+def publish_inspect(publish_run_id: str) -> None:
+    """Show manifest details for one staged publish run."""
+    stage_dir = get_data_dir() / "publish" / publish_run_id
+    try:
+        manifest = load_publish_manifest(stage_dir, publish_run_id)
+    except FileNotFoundError as exc:
+        raise click.ClickException(str(exc)) from exc
+
+    click.echo(f"Publish run: {manifest.publish_run_id}")
+    click.echo(f"Generated at: {manifest.generated_at}")
+    click.echo(f"Knowledge Forge version: {manifest.knowledge_forge_version}")
+    click.echo(f"Source documents: {', '.join(manifest.source_documents) if manifest.source_documents else '-'}")
+    click.echo(f"Buckets: {', '.join(manifest.buckets) if manifest.buckets else '-'}")
+    click.echo(f"Files written: {len(manifest.files_written)}")
+    for path in manifest.files_written:
+        click.echo(f"  write\t{path}")
+    click.echo(f"Files updated: {len(manifest.files_updated)}")
+    for path in manifest.files_updated:
+        click.echo(f"  update\t{path}")
+    click.echo(f"Files removed: {len(manifest.files_removed)}")
+    for path in manifest.files_removed:
+        click.echo(f"  remove\t{path}")
+    click.echo(f"Extraction version: {manifest.extraction_version}")
+    click.echo(f"Compilation version: {manifest.compilation_version}")
 
 
 @publish.command("pr")
