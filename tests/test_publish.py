@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
 from click.testing import CliRunner
 from yaml import safe_dump
 
@@ -310,3 +311,46 @@ def test_publish_validate_cli_reports_success_and_failure(tmp_path: Path) -> Non
     assert failure.exit_code != 0
     assert "Valid: no" in failure.output
     assert "publish validation failed" in failure.output
+
+
+def test_stage_publish_raises_on_duplicate_run_id(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    source_page = _compiled_page(
+        data_dir / "compiled" / "source-pages" / "doc-1.md",
+        doc_id="doc-1",
+        frontmatter=_frontmatter(doc_id="doc-1"),
+    )
+    stage_publish("kf-dup-001", [source_page], data_dir=data_dir)
+    with pytest.raises(FileExistsError, match="already exists and is non-empty"):
+        stage_publish("kf-dup-001", [source_page], data_dir=data_dir)
+
+
+def test_validate_rejects_manifest_paths_with_dotdot_segments(tmp_path: Path) -> None:
+    stage_dir = tmp_path / "data" / "publish" / "kf-dotdot-001"
+    publish_root = stage_dir / "repo-wiki" / "knowledge"
+    _write_markdown(
+        publish_root / "source-index" / "doc-1.md",
+        _frontmatter(doc_id="doc-1", source_documents=[{"doc_id": "doc-1"}]),
+    )
+    _write_manifest(
+        stage_dir,
+        "kf-dotdot-001",
+        files_written=["../outside-knowledge/evil.md"],
+    )
+
+    report = validate_publish_output(stage_dir)
+
+    assert report.valid is False
+    assert any("must not contain .." in error for error in report.errors)
+
+
+def test_load_frontmatter_accepts_crlf_newlines(tmp_path: Path) -> None:
+    from knowledge_forge.publish.validate import _load_frontmatter
+
+    md_file = tmp_path / "page.md"
+    crlf_content = "---\r\ntitle: CRLF Page\r\ngenerated_by: knowledge-forge\r\n---\r\n\r\n# Content\r\n"
+    md_file.write_bytes(crlf_content.encode("utf-8"))
+    frontmatter, errors = _load_frontmatter(md_file)
+    assert errors == []
+    assert frontmatter is not None
+    assert frontmatter["title"] == "CRLF Page"

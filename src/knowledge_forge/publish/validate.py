@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 from pydantic import BaseModel, ConfigDict, Field
 from yaml import YAMLError, safe_load
@@ -127,12 +127,18 @@ def _source_documents(frontmatter: dict[str, object]) -> list[dict[str, str]]:
 
 def _load_frontmatter(path: Path) -> tuple[dict[str, object] | None, list[str]]:
     payload = path.read_text(encoding="utf-8")
-    if not payload.startswith("---\n"):
+    lines = payload.splitlines(keepends=True)
+    if not lines or lines[0].rstrip("\r\n") != "---":
         return None, ["missing YAML frontmatter"]
-    try:
-        _, raw_frontmatter, _ = payload.split("---\n", 2)
-    except ValueError:
+
+    closing_index = next(
+        (index for index, line in enumerate(lines[1:], start=1) if line.rstrip("\r\n") == "---"),
+        None,
+    )
+    if closing_index is None:
         return None, ["unterminated YAML frontmatter block"]
+
+    raw_frontmatter = "".join(lines[1:closing_index])
     try:
         parsed = safe_load(raw_frontmatter)
     except YAMLError as exc:
@@ -232,6 +238,12 @@ def _validate_publish_manifests(publish_root: Path, publish_history_root: Path) 
                     f"{manifest_path.relative_to(publish_root).as_posix()}: manifest file path must be relative"
                 )
                 continue
+            if ".." in PurePosixPath(relative_file).parts:
+                errors.append(
+                    f"{manifest_path.relative_to(publish_root).as_posix()}: manifest path must not contain .. "
+                    f"segments ({relative_file})"
+                )
+                continue
             target = publish_root / relative_file
             try:
                 target.relative_to(publish_root)
@@ -253,7 +265,7 @@ def _validate_publish_manifests(publish_root: Path, publish_history_root: Path) 
 def _prior_written_files(publish_history_root: Path, *, exclude_publish_root: Path) -> set[str]:
     prior_written_files: set[str] = set()
     for manifest_path in publish_history_root.glob("*/repo-wiki/knowledge/_manifests/*.json"):
-        if manifest_path.parent.parent.parent == exclude_publish_root:
+        if manifest_path.parent.parent == exclude_publish_root:
             continue
         try:
             manifest = PublishManifest.model_validate_json(manifest_path.read_text(encoding="utf-8"))

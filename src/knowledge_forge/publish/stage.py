@@ -72,6 +72,11 @@ def stage_publish(
 
     resolved_data_dir = get_data_dir(data_dir)
     stage_dir = resolved_data_dir / "publish" / publish_run_id
+    if stage_dir.exists() and any(stage_dir.iterdir()):
+        raise FileExistsError(
+            f"publish stage directory already exists and is non-empty: {stage_dir}. "
+            "Use a different publish_run_id or remove the existing staged run."
+        )
     publish_root = stage_dir / "repo-wiki" / "knowledge"
     publish_root.mkdir(parents=True, exist_ok=True)
 
@@ -162,6 +167,8 @@ def _publish_relative_path(page: CompiledPage) -> Path:
             overview_relative = Path(*overview_relative.parts[1:])
         return Path("manufacturers") / overview_relative
     if page_group == "topic-pages":
+        if len(compiled_relative.parts) < 2:
+            raise ValueError(f"compiled topic page path is missing a bucket slug: {page.output_path}")
         bucket_slug = compiled_relative.parts[1]
         topic = page.frontmatter.get("topic")
         if not isinstance(topic, str) or not topic:
