@@ -8,6 +8,7 @@ from pathlib import Path
 import click
 
 from knowledge_forge.bucketing.assigner import bucket_manifest, bucket_unassigned_manifests
+from knowledge_forge.compile import compile_all_source_pages, compile_source_page
 from knowledge_forge.extract import audit_document_provenance, extract_document
 from knowledge_forge.inference import InferenceConfig, aggregate_costs, ingest_results, poll_batch
 from knowledge_forge.intake.importer import (
@@ -34,6 +35,11 @@ def intake() -> None:
 @cli.group(help="Inspect and operate the inference layer.")
 def inference() -> None:
     """Inference command group."""
+
+
+@cli.group(help="Compile reviewable knowledge artifacts from extracted records.")
+def compile() -> None:
+    """Compilation command group."""
 
 
 @intake.command("register")
@@ -404,6 +410,39 @@ def _extract_provenance(doc_id: str) -> None:
             if row.valid:
                 continue
             click.echo(f"{row.record_type}\t{row.record_id}\t{'; '.join(row.errors)}")
+
+
+@compile.command("source-pages")
+@click.argument("doc_id", required=False, type=str)
+@click.option("--all", "compile_all", is_flag=True, help="Compile source pages for every extracted document.")
+def compile_source_pages(doc_id: str | None, compile_all: bool) -> None:
+    """Compile reviewable Markdown source pages from extracted records."""
+    if compile_all and doc_id is not None:
+        raise click.ClickException("pass either a doc_id or --all, not both")
+    if not compile_all and doc_id is None:
+        raise click.ClickException("pass a doc_id or use --all")
+
+    data_dir = get_data_dir()
+    if compile_all:
+        try:
+            pages = compile_all_source_pages(data_dir=data_dir)
+        except FileNotFoundError as exc:
+            raise click.ClickException(str(exc)) from exc
+        if not pages:
+            click.echo("No extracted manifests found.")
+            return
+        click.echo(f"Compiled {len(pages)} source page(s).")
+        for page in pages:
+            click.echo(f"{page.doc_id}\t{page.output_path}")
+        return
+
+    try:
+        page = compile_source_page(doc_id, data_dir=data_dir)
+    except FileNotFoundError as exc:
+        raise click.ClickException(str(exc)) from exc
+
+    click.echo(f"Compiled source page for {doc_id}")
+    click.echo(f"Output: {page.output_path}")
 
 
 @inference.command("costs")
