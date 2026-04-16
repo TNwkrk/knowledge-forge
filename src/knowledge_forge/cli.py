@@ -29,7 +29,7 @@ from knowledge_forge.intake.importer import (
 from knowledge_forge.intake.manifest import CANONICAL_DOCUMENT_TYPE_VALUES, DOCUMENT_CLASS_VALUES
 from knowledge_forge.normalize import inspect_normalization, normalize_document
 from knowledge_forge.parse import parse_document, score_parse, section_document
-from knowledge_forge.publish import validate_publish_output
+from knowledge_forge.publish import create_publish_pr, validate_publish_output
 
 
 @click.group(help="Knowledge Forge command line interface.")
@@ -584,6 +584,53 @@ def publish_validate(publish_run_id: str) -> None:
         for error in report.errors:
             click.echo(f"- {error}")
         raise click.ClickException(f"publish validation failed for {publish_run_id}")
+
+
+@publish.command("pr")
+@click.argument("publish_run_id", type=str)
+@click.option(
+    "--target-repo",
+    type=str,
+    default="TNwkrk/FlowCommander",
+    show_default=True,
+    help="GitHub repository that receives the publish PR.",
+)
+@click.option("--dry-run", is_flag=True, help="Prepare the downstream branch without pushing or opening a PR.")
+@click.option(
+    "--target-repo-path",
+    type=click.Path(file_okay=False, dir_okay=True, path_type=Path),
+    help="Override the local FlowCommander checkout path used for the publish branch.",
+)
+def publish_pr(publish_run_id: str, target_repo: str, dry_run: bool, target_repo_path: Path | None) -> None:
+    """Open a draft publish PR against FlowCommander from one staged run."""
+    try:
+        result = create_publish_pr(
+            publish_run_id,
+            target_repo,
+            dry_run=dry_run,
+            data_dir=get_data_dir(),
+            target_repo_path=target_repo_path,
+        )
+    except (FileNotFoundError, ValueError, RuntimeError) as exc:
+        raise click.ClickException(str(exc)) from exc
+
+    click.echo(f"Publish run: {publish_run_id}")
+    click.echo(f"Target repo: {target_repo}")
+    click.echo(f"Target path: {result.target_repo_path}")
+    click.echo(f"Branch: {result.branch}")
+    click.echo(f"Added: {len(result.files_added)}")
+    click.echo(f"Updated: {len(result.files_updated)}")
+    click.echo(f"Removed: {len(result.files_removed)}")
+
+    if result.dry_run:
+        click.echo("Dry run: yes")
+        return
+
+    if result.pr_url is None:
+        click.echo("No downstream changes detected; PR not opened.")
+        return
+
+    click.echo(f"PR: {result.pr_url}")
 
 
 @inference.command("costs")

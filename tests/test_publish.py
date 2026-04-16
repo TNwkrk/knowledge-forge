@@ -1,8 +1,9 @@
-"""Tests for publish staging and contract validation."""
+"""Tests for publish staging, contract validation, and PR creation."""
 
 from __future__ import annotations
 
 import json
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -11,7 +12,8 @@ from yaml import safe_dump
 
 from knowledge_forge.cli import cli
 from knowledge_forge.compile.source_pages import CompiledPage, CompileMetadata
-from knowledge_forge.publish import stage_publish, validate_publish_output
+from knowledge_forge.publish import create_publish_pr, stage_publish, validate_publish_output
+from knowledge_forge.publish.pr import PRResult
 
 
 def _compiled_page(
@@ -108,6 +110,34 @@ def _write_manifest(
             indent=2,
         ),
         encoding="utf-8",
+    )
+
+
+def _init_git_repo(path: Path) -> None:
+    path.mkdir(parents=True, exist_ok=True)
+    subprocess.run(["git", "init", "-b", "main"], cwd=path, check=True, capture_output=True, text=True)
+    subprocess.run(
+        ["git", "config", "user.name", "Knowledge Forge"], cwd=path, check=True, capture_output=True, text=True
+    )
+    subprocess.run(
+        ["git", "config", "user.email", "knowledge-forge@example.com"],
+        cwd=path,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    subprocess.run(["git", "add", "-A"], cwd=path, check=True, capture_output=True, text=True)
+    subprocess.run(
+        ["git", "commit", "--allow-empty", "-m", "Initial"], cwd=path, check=True, capture_output=True, text=True
+    )
+    subprocess.run(["git", "remote", "add", "origin", str(path)], cwd=path, check=True, capture_output=True, text=True)
+    subprocess.run(["git", "fetch", "origin"], cwd=path, check=True, capture_output=True, text=True)
+    subprocess.run(
+        ["git", "symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main"],
+        cwd=path,
+        check=True,
+        capture_output=True,
+        text=True,
     )
 
 
@@ -311,6 +341,150 @@ def test_publish_validate_cli_reports_success_and_failure(tmp_path: Path) -> Non
     assert failure.exit_code != 0
     assert "Valid: no" in failure.output
     assert "publish validation failed" in failure.output
+
+
+def test_create_publish_pr_dry_run_syncs_only_knowledge_subtree(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    stage_dir = data_dir / "publish" / "kf-20260416-006"
+    publish_root = stage_dir / "repo-wiki" / "knowledge"
+    repo_path = tmp_path / "FlowCommander"
+    _init_git_repo(repo_path)
+
+    (repo_path / "repo-wiki" / "notes.md").parent.mkdir(parents=True, exist_ok=True)
+    (repo_path / "repo-wiki" / "notes.md").write_text("keep me", encoding="utf-8")
+    (repo_path / "repo-wiki" / "knowledge" / "source-index").mkdir(parents=True, exist_ok=True)
+    (repo_path / "repo-wiki" / "knowledge" / "source-index" / "old-doc.md").write_text("old", encoding="utf-8")
+
+    _write_markdown(
+        publish_root / "source-index" / "new-doc.md",
+        _frontmatter(
+            doc_id="new-doc",
+            source_documents=[{"doc_id": "new-doc", "manufacturer": "Honeywell", "family": "DC1000"}],
+        ),
+    )
+    _write_manifest(
+        stage_dir,
+        "kf-20260416-006",
+        files_written=["source-index/new-doc.md"],
+        files_removed=["source-index/old-doc.md"],
+    )
+    prior_stage_dir = data_dir / "publish" / "kf-20260416-000"
+    _write_manifest(prior_stage_dir, "kf-20260416-000", files_written=["source-index/old-doc.md"])
+
+    result = create_publish_pr(
+        "kf-20260416-006",
+        "TNwkrk/FlowCommander",
+        data_dir=data_dir,
+        dry_run=True,
+        target_repo_path=repo_path,
+    )
+
+    assert result == PRResult(
+        pr_url=None,
+        pr_number=None,
+        branch="knowledge-forge/kf-20260416-006",
+        files_added=["source-index/new-doc.md"],
+        files_updated=[],
+        files_removed=["source-index/old-doc.md"],
+        dry_run=True,
+        target_repo_path=repo_path,
+    )
+    assert (repo_path / "repo-wiki" / "notes.md").read_text(encoding="utf-8") == "keep me"
+    assert (repo_path / "repo-wiki" / "knowledge" / "source-index" / "new-doc.md").exists()
+    assert not (repo_path / "repo-wiki" / "knowledge" / "source-index" / "old-doc.md").exists()
+
+
+def test_create_publish_pr_creates_commit_and_pr_with_labels(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    stage_dir = data_dir / "publish" / "kf-20260416-007"
+    publish_root = stage_dir / "repo-wiki" / "knowledge"
+    repo_path = tmp_path / "FlowCommander"
+    _init_git_repo(repo_path)
+
+    _write_markdown(
+        publish_root / "source-index" / "doc-1.md",
+        _frontmatter(
+            doc_id="doc-1",
+            source_documents=[{"doc_id": "doc-1", "manufacturer": "Honeywell", "family": "DC1000"}],
+        ),
+    )
+    _write_manifest(stage_dir, "kf-20260416-007", files_written=["source-index/doc-1.md"])
+
+    calls: list[tuple[str, object]] = []
+
+    class StubGitHubApi:
+        def create_pull_request(
+            self,
+            repo: str,
+            *,
+            title: str,
+            body: str,
+            head: str,
+            base: str,
+            draft: bool,
+        ) -> tuple[int, str]:
+            calls.append(("create_pull_request", repo, title, body, head, base, draft))
+            return 42, "https://github.com/TNwkrk/FlowCommander/pull/42"
+
+        def add_labels(self, repo: str, issue_number: int, labels: list[str]) -> None:
+            calls.append(("add_labels", repo, issue_number, labels))
+
+    result = create_publish_pr(
+        "kf-20260416-007",
+        "TNwkrk/FlowCommander",
+        data_dir=data_dir,
+        target_repo_path=repo_path,
+        github_api=StubGitHubApi(),
+    )
+
+    assert result.pr_number == 42
+    assert result.pr_url == "https://github.com/TNwkrk/FlowCommander/pull/42"
+    assert result.branch == "knowledge-forge/kf-20260416-007"
+    assert result.files_added == ["source-index/doc-1.md"]
+    assert ("add_labels", "TNwkrk/FlowCommander", 42, ["knowledge-forge", "auto-generated"]) in calls
+    create_call = next(call for call in calls if call[0] == "create_pull_request")
+    assert create_call[1] == "TNwkrk/FlowCommander"
+    assert create_call[2] == "[Knowledge Forge] Publish honeywell dc1000 family"
+    assert "## Source documents" in create_call[3]
+    assert create_call[4] == "knowledge-forge/kf-20260416-007"
+    assert create_call[5] == "main"
+    assert create_call[6] is True
+
+
+def test_publish_pr_cli_reports_dry_run(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    stage_dir = data_dir / "publish" / "kf-20260416-008"
+    publish_root = stage_dir / "repo-wiki" / "knowledge"
+    repo_path = tmp_path / "FlowCommander"
+    _init_git_repo(repo_path)
+
+    _write_markdown(
+        publish_root / "source-index" / "doc-1.md",
+        _frontmatter(
+            doc_id="doc-1",
+            source_documents=[{"doc_id": "doc-1", "manufacturer": "Honeywell", "family": "DC1000"}],
+        ),
+    )
+    _write_manifest(stage_dir, "kf-20260416-008", files_written=["source-index/doc-1.md"])
+
+    runner = CliRunner()
+    env = {"KNOWLEDGE_FORGE_DATA_DIR": str(data_dir)}
+    result = runner.invoke(
+        cli,
+        [
+            "publish",
+            "pr",
+            "kf-20260416-008",
+            "--dry-run",
+            "--target-repo-path",
+            str(repo_path),
+        ],
+        env=env,
+    )
+
+    assert result.exit_code == 0
+    assert "Dry run: yes" in result.output
+    assert "Branch: knowledge-forge/kf-20260416-008" in result.output
 
 
 def test_stage_publish_raises_on_duplicate_run_id(tmp_path: Path) -> None:
