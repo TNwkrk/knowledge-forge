@@ -51,6 +51,7 @@ Before any heavy processing, each manifest entry is assigned to one or more buck
 - **Product family** — groups docs for a product line
 - **Model / applicability** — groups docs for specific models
 - **Document type** — service manual vs. bulletin vs. supplement
+- **Document class** — authoritative technical vs. operational vs. contextual
 - **Revision authority** — which doc supersedes which
 - **Publication date** — temporal ordering within a bucket
 

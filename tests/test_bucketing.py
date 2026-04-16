@@ -25,6 +25,7 @@ def _build_manifest(
         manufacturer="Honeywell",
         family="DC1000",
         model_applicability=models or ["DC1000"],
+        document_class="authoritative-technical",
         document_type="Service Manual",
         revision="Rev 3",
         publication_date=publication_date,
@@ -76,6 +77,16 @@ def test_assign_buckets_uses_fallback_for_missing_publication_date() -> None:
     assert publication_bucket.value == "undated"
 
 
+def test_assign_buckets_include_document_class_dimension() -> None:
+    manifest = _build_manifest()
+
+    assignments = assign_buckets(manifest)
+    document_class_bucket = next(item for item in assignments if item.dimension == "document_class")
+
+    assert document_class_bucket.bucket_id == "honeywell/dc1000/document-class"
+    assert document_class_bucket.value == "authoritative-technical"
+
+
 def test_bucket_manifest_persists_assignments_and_status(tmp_path: Path) -> None:
     data_dir = tmp_path / "data"
     manifests_dir = data_dir / "manifests"
@@ -89,11 +100,11 @@ def test_bucket_manifest_persists_assignments_and_status(tmp_path: Path) -> None
 
     assert result.updated is True
     assert result.manifest.document.status == DocumentStatus.BUCKETED
-    assert len(result.manifest.bucket_assignments) == 7
+    assert len(result.manifest.bucket_assignments) == 8
 
     restored = ManifestEntry.from_yaml(manifest_path.read_text(encoding="utf-8"))
     assert restored.document.status == DocumentStatus.BUCKETED
-    assert len(restored.bucket_assignments) == 7
+    assert len(restored.bucket_assignments) == 8
 
 
 def test_bucket_unassigned_manifests_only_updates_missing_assignments(tmp_path: Path) -> None:
