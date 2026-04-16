@@ -52,11 +52,14 @@ def render_contradiction_notes(bucket_id: str, *, data_dir: Path | None = None) 
     generated_at = _utc_timestamp()
 
     source_documents = _build_source_documents(bucket_id, data_dir=resolved_data_dir)
-    extraction_versions = sorted(
-        {claim.record.extraction_version for entry in entries for claim in (entry.left, entry.right)}
-        | {ANALYSIS_VERSION}
-    )
-    parser_versions = sorted({claim.record.parser_version for entry in entries for claim in (entry.left, entry.right)})
+    extraction_versions_set: set[str] = {ANALYSIS_VERSION}
+    parser_versions_set: set[str] = set()
+    for entry in entries:
+        for claim in (entry.left, entry.right):
+            extraction_versions_set.add(claim.record.extraction_version)
+            parser_versions_set.add(claim.record.parser_version)
+    extraction_versions = sorted(extraction_versions_set)
+    parser_versions = sorted(parser_versions_set)
 
     output_path = resolved_data_dir / "compiled" / "contradiction-notes" / f"{slugify(bucket_id)}.md"
     output_path.parent.mkdir(parents=True, exist_ok=True)
