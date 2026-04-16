@@ -36,6 +36,11 @@ BUCKET_DIMENSIONS: tuple[BucketDimension, ...] = (
         description="Separates service manuals, quick starts, bulletins, and supplements.",
     ),
     BucketDimension(
+        key="document_class",
+        label="Document class",
+        description="Separates authoritative technical, operational, and contextual source families.",
+    ),
+    BucketDimension(
         key="revision_authority",
         label="Revision authority",
         description="Captures the current revision label used for later precedence analysis.",

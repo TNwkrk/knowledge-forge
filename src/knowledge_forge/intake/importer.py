@@ -34,6 +34,7 @@ class RegistrationRequest:
     publication_date: date | None
     language: str
     priority: int
+    document_class: str = "authoritative-technical"
     force: bool = False
 
 
@@ -184,6 +185,7 @@ def register_document(
         manufacturer=request.manufacturer,
         family=request.family,
         model_applicability=request.model_applicability,
+        document_class=request.document_class,
         document_type=request.document_type,
         revision=request.revision,
         publication_date=request.publication_date,
@@ -254,6 +256,7 @@ def _force_reregister_manifest(
             "manufacturer": request.manufacturer,
             "family": request.family,
             "model_applicability": request.model_applicability,
+            "document_class": request.document_class,
             "document_type": request.document_type,
             "revision": request.revision,
             "publication_date": request.publication_date,

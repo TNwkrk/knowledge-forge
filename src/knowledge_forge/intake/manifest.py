@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from datetime import date, datetime, timezone
 from enum import Enum
 from hashlib import sha256
@@ -44,6 +45,101 @@ def compute_sha256(path: str | Path) -> str:
         for chunk in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+DOCUMENT_CLASS_VALUES: tuple[str, ...] = (
+    "authoritative-technical",
+    "operational",
+    "contextual",
+)
+
+CANONICAL_DOCUMENT_TYPE_VALUES: tuple[str, ...] = (
+    "installation-manual",
+    "operation-manual",
+    "service-manual",
+    "startup-procedure",
+    "shutdown-procedure",
+    "winterization-procedure",
+    "pm-procedure",
+    "sop",
+    "checklist",
+    "datasheet",
+    "specification-sheet",
+    "selection-guide",
+    "certification",
+    "service-bulletin",
+    "revision-history",
+    "firmware-release-note",
+    "supersession-notice",
+    "parts-list",
+    "bom",
+    "spare-parts-catalog",
+    "engineering-drawing",
+    "wiring-diagram",
+    "pid",
+    "safety-procedure",
+    "loto-sheet",
+    "permit-reference",
+    "field-form",
+    "inspection-template",
+    "commissioning-sheet",
+    "training-material",
+    "technician-reference",
+    "best-practice",
+    "bulletin",
+    "addendum",
+    "quick-start",
+    "supplemental-guide",
+)
+
+LEGACY_DOCUMENT_TYPE_VALUES: tuple[str, ...] = (
+    "Installation Manual",
+    "Operation Manual",
+    "Service Manual",
+    "Startup Procedure",
+    "Shutdown Procedure",
+    "Winterization Procedure",
+    "PM Procedure",
+    "SOP",
+    "Checklist",
+    "Datasheet",
+    "Specification Sheet",
+    "Selection Guide",
+    "Certification",
+    "Service Bulletin",
+    "Revision History",
+    "Firmware Release Note",
+    "Supersession Notice",
+    "Parts List",
+    "BOM",
+    "Spare Parts Catalog",
+    "Engineering Drawing",
+    "Wiring Diagram",
+    "P&ID",
+    "Safety Procedure",
+    "LOTO Sheet",
+    "Permit Reference",
+    "Field Form",
+    "Inspection Template",
+    "Commissioning Sheet",
+    "Training Material",
+    "Technician Reference",
+    "Best Practice",
+    "Bulletin",
+    "Addendum",
+    "Quick Start",
+    "Quick Start Guide",
+    "Supplemental Guide",
+)
+
+
+def _normalized_allowed_values(values: Iterable[str]) -> set[str]:
+    return {value.strip().casefold() for value in values}
+
+
+ALLOWED_DOCUMENT_TYPE_VALUES: frozenset[str] = frozenset(
+    _normalized_allowed_values(CANONICAL_DOCUMENT_TYPE_VALUES) | _normalized_allowed_values(LEGACY_DOCUMENT_TYPE_VALUES)
+)
 
 
 class DocumentStatus(str, Enum):
@@ -94,6 +190,7 @@ class Document(ManifestModel):
     manufacturer: str = Field(min_length=1)
     family: str = Field(min_length=1)
     model_applicability: list[str] = Field(min_length=1)
+    document_class: str = Field(default="authoritative-technical", min_length=1)
     document_type: str = Field(min_length=1)
     revision: str = Field(min_length=1)
     publication_date: date | None = None
@@ -110,13 +207,35 @@ class Document(ManifestModel):
             raise ValueError("checksum must be a 64-character hexadecimal SHA-256 digest")
         return normalized
 
-    @field_validator("manufacturer", "family", "document_type", "revision")
+    @field_validator("manufacturer", "family", "revision")
     @classmethod
     def validate_named_field(cls, value: str) -> str:
         """Trim user-facing name fields."""
         cleaned = value.strip()
         if not cleaned:
             raise ValueError("value must not be blank")
+        return cleaned
+
+    @field_validator("document_class")
+    @classmethod
+    def validate_document_class(cls, value: str) -> str:
+        """Validate the canonical document class vocabulary."""
+        cleaned = value.strip().casefold()
+        if cleaned not in DOCUMENT_CLASS_VALUES:
+            allowed = ", ".join(DOCUMENT_CLASS_VALUES)
+            raise ValueError(f"document_class must be one of: {allowed}")
+        return cleaned
+
+    @field_validator("document_type")
+    @classmethod
+    def validate_document_type(cls, value: str) -> str:
+        """Allow the expanded canonical vocabulary plus legacy persisted values."""
+        cleaned = value.strip()
+        if not cleaned:
+            raise ValueError("value must not be blank")
+        if cleaned.casefold() not in ALLOWED_DOCUMENT_TYPE_VALUES:
+            allowed = ", ".join(CANONICAL_DOCUMENT_TYPE_VALUES)
+            raise ValueError(f"document_type must be one of the canonical values or legacy aliases: {allowed}")
         return cleaned
 
     @field_validator("model_applicability")

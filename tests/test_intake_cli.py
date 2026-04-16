@@ -63,6 +63,7 @@ def test_intake_register_creates_manifest_and_raw_copy(tmp_path: Path) -> None:
     manifest = ManifestEntry.from_yaml(manifest_path.read_text(encoding="utf-8"))
     assert manifest.document.source_path == source.resolve()
     assert manifest.document.model_applicability == ["DC1000", "DC1100"]
+    assert manifest.document.document_class == "authoritative-technical"
     assert manifest.document.status.value == "registered"
 
 
@@ -109,6 +110,7 @@ def test_intake_list_and_inspect_show_registered_manifest(tmp_path: Path) -> Non
     )
     assert inspect.exit_code == 0
     assert "manufacturer: Honeywell" in inspect.output
+    assert "document_class: authoritative-technical" in inspect.output
     assert "document_type: Quick Start Guide" in inspect.output
     assert "model_applicability:" in inspect.output
 
@@ -298,13 +300,13 @@ def test_intake_bucket_updates_single_manifest(tmp_path: Path) -> None:
 
     assert bucket.exit_code == 0
     assert "Bucketed honeywell-dc1000-service-manual-rev-3" in bucket.output
-    assert "Assignments: 7" in bucket.output
+    assert "Assignments: 8" in bucket.output
 
     manifest = ManifestEntry.from_yaml(
         (data_dir / "manifests" / "honeywell-dc1000-service-manual-rev-3.yaml").read_text(encoding="utf-8")
     )
     assert manifest.document.status.value == "bucketed"
-    assert len(manifest.bucket_assignments) == 7
+    assert len(manifest.bucket_assignments) == 8
     assert manifest.status_history[-1].to_status == manifest.document.status
     assert manifest.status_history[-1].reason == "bucket assignments generated"
 
@@ -348,7 +350,52 @@ def test_intake_bucket_all_only_processes_unassigned_manifests(tmp_path: Path) -
 
     assert bucket_all.exit_code == 0
     assert "Bucketed 1 manifest(s)." in bucket_all.output
-    assert "honeywell-dc1000-service-manual-rev-4\t6 assignments" in bucket_all.output
+    assert "honeywell-dc1000-service-manual-rev-4\t7 assignments" in bucket_all.output
+
+
+def test_intake_register_accepts_non_manual_document_class_and_type(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    source = _create_pdf(tmp_path / "sop.pdf")
+    runner = CliRunner()
+    env = {"KNOWLEDGE_FORGE_DATA_DIR": str(data_dir)}
+
+    register = runner.invoke(
+        cli,
+        [
+            "intake",
+            "register",
+            str(source),
+            "--manufacturer",
+            "Honeywell",
+            "--family",
+            "DC1000",
+            "--model",
+            "DC1000",
+            "--document-class",
+            "operational",
+            "--document-type",
+            "sop",
+            "--revision",
+            "Rev A",
+            "--language",
+            "en",
+            "--priority",
+            "2",
+        ],
+        env=env,
+    )
+    assert register.exit_code == 0
+
+    bucket = runner.invoke(cli, ["intake", "bucket", "honeywell-dc1000-sop-rev-a"], env=env)
+    assert bucket.exit_code == 0
+    assert "Assignments: 7" in bucket.output
+
+    manifest = ManifestEntry.from_yaml((data_dir / "manifests" / "honeywell-dc1000-sop-rev-a.yaml").read_text("utf-8"))
+    assert manifest.document.document_class == "operational"
+    assert manifest.document.document_type == "sop"
+    document_class_bucket = [item for item in manifest.bucket_assignments if item.dimension == "document_class"]
+    assert len(document_class_bucket) == 1
+    assert document_class_bucket[0].value == "operational"
 
 
 def test_intake_status_reports_current_status_and_history(tmp_path: Path) -> None:

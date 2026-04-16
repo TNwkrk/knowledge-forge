@@ -9,6 +9,7 @@ from pathlib import Path
 import pytest
 
 from knowledge_forge.intake.manifest import (
+    CANONICAL_DOCUMENT_TYPE_VALUES,
     BucketAssignment,
     Document,
     DocumentStatus,
@@ -26,6 +27,7 @@ def build_document() -> Document:
         manufacturer="Honeywell",
         family="DC1000",
         model_applicability=["DC1000", "DC1100"],
+        document_class="authoritative-technical",
         document_type="Service Manual",
         revision="Rev 3",
         publication_date=date(2024, 1, 15),
@@ -63,6 +65,7 @@ def test_document_validation_normalizes_fields() -> None:
     assert document.checksum == "a" * 64
     assert document.language == "en"
     assert document.doc_id == "honeywell-dc1000-service-manual-rev-3"
+    assert document.document_class == "authoritative-technical"
 
 
 def test_document_validation_rejects_invalid_language() -> None:
@@ -76,6 +79,35 @@ def test_document_validation_rejects_invalid_language() -> None:
             document_type="Service Manual",
             revision="Rev 3",
             language="eng",
+        )
+
+
+def test_document_validation_rejects_invalid_document_class() -> None:
+    with pytest.raises(ValueError, match="document_class must be one of"):
+        Document(
+            source_path=Path("/tmp/manual.pdf"),
+            checksum="b" * 64,
+            manufacturer="Honeywell",
+            family="DC1000",
+            model_applicability=["DC1000"],
+            document_class="not-a-class",
+            document_type="Service Manual",
+            revision="Rev 3",
+            language="en",
+        )
+
+
+def test_document_validation_rejects_invalid_document_type() -> None:
+    with pytest.raises(ValueError, match="document_type must be one of"):
+        Document(
+            source_path=Path("/tmp/manual.pdf"),
+            checksum="b" * 64,
+            manufacturer="Honeywell",
+            family="DC1000",
+            model_applicability=["DC1000"],
+            document_type="Not A Real Type",
+            revision="Rev 3",
+            language="en",
         )
 
 
@@ -107,6 +139,22 @@ def test_manifest_hydrates_legacy_version_and_status_history() -> None:
     assert manifest.status_history[0].from_status is None
     assert manifest.status_history[0].to_status == DocumentStatus.REGISTERED
     assert manifest.status_history[0].reason == "initial registration"
+
+
+def test_manifest_hydrates_legacy_document_class_default() -> None:
+    manifest = build_manifest_entry()
+    payload = manifest.to_dict()
+    payload["document"].pop("document_class")
+
+    restored = ManifestEntry.model_validate(payload)
+
+    assert restored.document.document_class == "authoritative-technical"
+
+
+def test_document_type_accepts_expanded_canonical_vocabulary() -> None:
+    document = build_document().model_copy(update={"document_type": CANONICAL_DOCUMENT_TYPE_VALUES[-1]})
+
+    assert document.document_type == "supplemental-guide"
 
 
 def test_transition_status_rejects_backward_changes_without_force() -> None:

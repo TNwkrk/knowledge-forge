@@ -121,6 +121,8 @@ def _values_for_dimension(manifest: ManifestEntry, dimension: str) -> list[str]:
         return _normalize_values(document.model_applicability, fallback="unknown-model")
     if dimension == "document_type":
         return [_fallback_value(document.document_type, "unknown-document-type")]
+    if dimension == "document_class":
+        return [_fallback_value(document.document_class, "unknown-document-class")]
     if dimension == "revision_authority":
         return [_fallback_value(document.revision, "unknown-revision")]
     if dimension == "publication_date":

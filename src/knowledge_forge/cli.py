@@ -23,6 +23,7 @@ from knowledge_forge.intake.importer import (
     load_manifest,
     register_document,
 )
+from knowledge_forge.intake.manifest import CANONICAL_DOCUMENT_TYPE_VALUES, DOCUMENT_CLASS_VALUES
 from knowledge_forge.normalize import inspect_normalization, normalize_document
 from knowledge_forge.parse import parse_document, score_parse, section_document
 
@@ -32,7 +33,7 @@ def cli() -> None:
     """Top-level CLI group for Knowledge Forge commands."""
 
 
-@cli.group(help="Register and inspect source manuals.")
+@cli.group(help="Register and inspect source documents.")
 def intake() -> None:
     """Intake command group."""
 
@@ -58,7 +59,16 @@ def compile() -> None:
     multiple=True,
     help="Model applicability. Repeat for multiple models.",
 )
-@click.option("--document-type", type=str, help="Document type, such as Service Manual.")
+@click.option(
+    "--document-class",
+    type=click.Choice(DOCUMENT_CLASS_VALUES, case_sensitive=False),
+    help="Document class: authoritative-technical, operational, or contextual.",
+)
+@click.option(
+    "--document-type",
+    type=str,
+    help=("Document type. Canonical examples: " + ", ".join(CANONICAL_DOCUMENT_TYPE_VALUES[:8]) + ", ..."),
+)
 @click.option("--revision", type=str, help="Document revision identifier.")
 @click.option(
     "--publication-date",
@@ -73,13 +83,14 @@ def intake_register(
     manufacturer: str | None,
     family: str | None,
     models: tuple[str, ...],
+    document_class: str | None,
     document_type: str | None,
     revision: str | None,
     publication_date: object | None,
     language: str | None,
     priority: int | None,
 ) -> None:
-    """Register a source manual into the local manifest store."""
+    """Register a source document into the local manifest store."""
     if not pdf_path.suffix.casefold() == ".pdf":
         raise click.ClickException("source file must be a PDF")
 
@@ -88,6 +99,7 @@ def intake_register(
         manufacturer=manufacturer or click.prompt("Manufacturer"),
         family=family or click.prompt("Family"),
         model_applicability=list(models) if models else _prompt_models(),
+        document_class=document_class or "authoritative-technical",
         document_type=document_type or click.prompt("Document type"),
         revision=revision or click.prompt("Revision"),
         publication_date=_coerce_publication_date(publication_date),
