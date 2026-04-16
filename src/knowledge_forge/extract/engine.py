@@ -9,6 +9,13 @@ from typing import TypeAlias
 
 from yaml import safe_load
 
+from knowledge_forge.extract.provenance import (
+    ExtractionMetadata,
+    attach_provenance,
+    load_bucket_context,
+    load_parse_metadata,
+    validate_record_provenance,
+)
 from knowledge_forge.extract.repair import repair_extraction
 from knowledge_forge.extract.schemas import ExtractionSchemaModel, get_json_schema, get_schema_model
 from knowledge_forge.inference import InferenceClient
@@ -42,6 +49,7 @@ class PromptTemplate:
     system: str
     user: str
     schema_ref: str
+    version: str = "v1"
     model: str | None = None
 
 
@@ -131,6 +139,8 @@ def extract_section(
 
     extracted: list[ExtractedRecord] = []
     section_quality = load_section_quality(section, data_dir=resolved_data_dir)
+    parse_meta = load_parse_metadata(section.doc_id, data_dir=resolved_data_dir)
+    bucket_context = load_bucket_context(section.doc_id, data_dir=resolved_data_dir)
     for record_type in resolved_record_types:
         template = load_prompt_template(record_type)
         if template.schema_ref != record_type:
@@ -176,18 +186,38 @@ def extract_section(
             output_tokens=attempt.output_tokens,
             max_output_tokens=client.config.max_tokens,
         )
+        records_with_provenance = [
+            attach_provenance(
+                record,
+                section,
+                parse_meta,
+                ExtractionMetadata(
+                    model=model,
+                    prompt_template=f"extraction/{record_type}",
+                    prompt_version=template.version,
+                    confidence=record.confidence,
+                    bucket_context=bucket_context,
+                ),
+            )
+            for record in scored_records
+        ]
         review_flag = build_review_flag(
             section=section,
             record_type=record_type,
-            records=scored_records,
+            records=records_with_provenance,
             min_confidence=min_confidence,
             repair_attempts=attempt.repair_attempts,
             errors=attempt.repair_errors,
         )
         if review_flag is not None:
             save_review_flag(review_flag, data_dir=resolved_data_dir)
-        save_records(section=section, record_type=record_type, records=scored_records, data_dir=resolved_data_dir)
-        extracted.extend(scored_records)
+        save_records(
+            section=section,
+            record_type=record_type,
+            records=records_with_provenance,
+            data_dir=resolved_data_dir,
+        )
+        extracted.extend(records_with_provenance)
 
     return extracted
 
@@ -227,6 +257,7 @@ def load_prompt_template(record_type: str, *, base_dir: Path | None = None) -> P
         system=str(payload["system"]),
         user=str(payload["user"]),
         schema_ref=str(payload["schema_ref"]),
+        version=str(payload.get("version", "v1")),
         model=str(payload["model"]) if payload.get("model") else None,
     )
 
@@ -260,6 +291,7 @@ def save_records(
 
     written_paths: list[Path] = []
     for index, record in enumerate(records, start=1):
+        validate_record_provenance(record)
         record_id = build_record_id(section.section_id, record_type, index)
         output_path = target_dir / f"{record_id}.json"
         output_path.write_text(record.model_dump_json(indent=2), encoding="utf-8")

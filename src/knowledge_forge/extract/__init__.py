@@ -10,6 +10,16 @@ from knowledge_forge.extract.engine import (
     load_sections,
     record_types_for_section_type,
 )
+from knowledge_forge.extract.provenance import (
+    ExtractionMetadata,
+    ProvenanceAuditReport,
+    ProvenanceAuditRow,
+    attach_provenance,
+    audit_document_provenance,
+    load_bucket_context,
+    load_parse_metadata,
+    validate_record_provenance,
+)
 from knowledge_forge.extract.repair import RepairResult, repair_extraction
 from knowledge_forge.extract.schemas import (
     JSON_SCHEMA_REGISTRY,
@@ -36,7 +46,10 @@ __all__ = [
     "Applicability",
     "BucketContext",
     "ContradictionCandidate",
+    "attach_provenance",
+    "audit_document_provenance",
     "extract_document",
+    "ExtractionMetadata",
     "ExtractedRecord",
     "ExtractionReviewFlag",
     "extract_section",
@@ -44,6 +57,8 @@ __all__ = [
     "get_schema_model",
     "JSON_SCHEMA_REGISTRY",
     "load_prompt_template",
+    "load_bucket_context",
+    "load_parse_metadata",
     "load_sections",
     "PartReference",
     "Procedure",
@@ -58,5 +73,8 @@ __all__ = [
     "SpecValue",
     "SupersessionCandidate",
     "TroubleshootingEntry",
+    "ProvenanceAuditReport",
+    "ProvenanceAuditRow",
+    "validate_record_provenance",
     "Warning",
 ]
