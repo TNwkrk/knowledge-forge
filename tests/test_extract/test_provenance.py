@@ -138,6 +138,80 @@ def test_attach_provenance_overwrites_nested_records() -> None:
     assert attached.steps[0].source_page_range.start_page == 18
 
 
+def test_attach_provenance_raises_on_missing_page_range() -> None:
+    section = Section(
+        doc_id="honeywell-dc1000-service-manual-rev3",
+        section_id="honeywell-dc1000-service-manual-rev3--startup--001",
+        section_type="startup",
+        title="Startup Procedure",
+        content="Verify the valve is open.",
+        page_range=(None, None),
+        heading_path=["Startup Procedure"],
+    )
+    parse_meta = ParseMetadata(
+        doc_id=section.doc_id,
+        parser="docling",
+        parser_version="docling-2.0.0",
+        processed_at="2026-04-16T00:00:00Z",
+        processing_time_seconds=0.5,
+        page_count=40,
+        status="success",
+        input_path="/tmp/manual.pdf",
+        input_checksum="a" * 64,
+        document_hash=None,
+        timings={},
+        confidence=None,
+        errors=[],
+    )
+    procedure = Procedure.model_validate(
+        {
+            "source_doc_id": section.doc_id,
+            "source_page_range": {"start_page": 1, "end_page": 1},
+            "source_heading": "Startup Procedure",
+            "parser_version": "docling-2.0.0",
+            "extraction_version": "extraction/procedure@v1:gpt-4o-mini",
+            "confidence": 0.8,
+            "bucket_context": [{"bucket_id": "honeywell/dc1000/family", "dimension": "family", "value": "DC1000"}],
+            "title": "Start controller",
+            "steps": [
+                {
+                    "source_doc_id": section.doc_id,
+                    "source_page_range": {"start_page": 1, "end_page": 1},
+                    "source_heading": "Startup Procedure",
+                    "parser_version": "docling-2.0.0",
+                    "extraction_version": "extraction/procedure@v1:gpt-4o-mini",
+                    "confidence": 0.8,
+                    "bucket_context": [
+                        {"bucket_id": "honeywell/dc1000/family", "dimension": "family", "value": "DC1000"}
+                    ],
+                    "step_number": 1,
+                    "instruction": "Verify the valve is open.",
+                    "note": None,
+                    "caution": None,
+                    "figure_ref": None,
+                }
+            ],
+            "applicability": None,
+            "warnings": [],
+            "tools_required": [],
+        }
+    )
+
+    with pytest.raises(ValueError, match="missing page_range"):
+        attach_provenance(
+            procedure,
+            section,
+            parse_meta,
+            ExtractionMetadata(
+                model="gpt-4o-mini",
+                prompt_template="extraction/procedure",
+                prompt_version="v1",
+                confidence=0.8,
+                bucket_context=[BucketContext(bucket_id="honeywell/dc1000/family", dimension="family", value="DC1000")],
+            ),
+        )
+
+
 def test_save_records_rejects_missing_provenance(tmp_path: Path) -> None:
     section = Section(
         doc_id="doc-001",
@@ -163,7 +237,7 @@ def test_save_records_rejects_missing_provenance(tmp_path: Path) -> None:
         figure_ref=None,
     )
 
-    with pytest.raises(ValueError, match="missing complete provenance"):
+    with pytest.raises(ValueError, match="record has invalid or incomplete provenance"):
         save_records(section=section, record_type="procedure_step", records=[record], data_dir=tmp_path / "data")
 
 

@@ -58,12 +58,16 @@ def attach_provenance(
 ) -> ExtractionSchemaModel:
     """Overwrite AI-supplied provenance with deterministic local metadata."""
     page_start, page_end = section.page_range
+    if page_start is None or page_end is None:
+        raise ValueError(
+            f"cannot attach provenance for section '{section.title}' in doc_id '{section.doc_id}': missing page_range"
+        )
     provenanced = _attach_nested_provenance(
         record,
         source_doc_id=section.doc_id,
         source_page_range={
-            "start_page": page_start or 1,
-            "end_page": page_end or page_start or 1,
+            "start_page": page_start,
+            "end_page": page_end,
         },
         source_heading=section.title,
         parser_version=parse_meta.parser_version,
@@ -75,14 +79,34 @@ def attach_provenance(
     return provenanced
 
 
+def _is_provenance_error_location(location: object) -> bool:
+    """Return True when a validation error location points to provenance fields."""
+    provenance_fields = {
+        "source_doc_id",
+        "source_page_range",
+        "source_heading",
+        "parser_version",
+        "extraction_version",
+        "confidence",
+        "bucket_context",
+    }
+
+    if isinstance(location, tuple):
+        return any(isinstance(part, str) and part in provenance_fields for part in location)
+    return isinstance(location, str) and location in provenance_fields
+
+
 def validate_record_provenance(record: ExtractionSchemaModel) -> None:
-    """Raise a clear error when a record lacks complete provenance."""
+    """Raise a clear error when a record fails provenance or schema validation."""
     if not isinstance(record, ProvenancedRecord):
         raise ValueError(f"record type '{type(record).__name__}' does not support provenance validation")
     try:
         type(record).model_validate(record.model_dump(mode="python"))
     except ValidationError as exc:
-        raise ValueError(f"record is missing complete provenance: {exc}") from exc
+        error_locations = [error.get("loc", ()) for error in exc.errors()]
+        if error_locations and all(_is_provenance_error_location(location) for location in error_locations):
+            raise ValueError(f"record has invalid or incomplete provenance: {exc}") from exc
+        raise ValueError(f"record failed schema validation: {exc}") from exc
 
 
 def load_parse_metadata(doc_id: str, *, data_dir: Path | None = None) -> ParseMetadata:

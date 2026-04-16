@@ -17,12 +17,13 @@ from knowledge_forge.extract.provenance import (
     validate_record_provenance,
 )
 from knowledge_forge.extract.repair import repair_extraction
-from knowledge_forge.extract.schemas import ExtractionSchemaModel, get_json_schema, get_schema_model
+from knowledge_forge.extract.schemas import BucketContext, ExtractionSchemaModel, get_json_schema, get_schema_model
 from knowledge_forge.inference import InferenceClient
 from knowledge_forge.inference.config import InferenceConfig
 from knowledge_forge.inference.schema_validator import ValidationResult
 from knowledge_forge.intake.importer import get_data_dir, load_manifest
 from knowledge_forge.intake.manifest import DocumentStatus
+from knowledge_forge.parse.quality import ParseMetadata
 from knowledge_forge.parse.sectioning import Section, SectionType
 
 ExtractedRecord: TypeAlias = ExtractionSchemaModel
@@ -104,6 +105,9 @@ def extract_document(
         active_config = config or InferenceConfig.load()
         active_client = InferenceClient(active_config, data_dir=resolved_data_dir)
 
+    parse_meta = load_parse_metadata(doc_id, data_dir=resolved_data_dir)
+    bucket_context = load_bucket_context(doc_id, data_dir=resolved_data_dir)
+
     extracted: list[ExtractedRecord] = []
     for section in sections:
         extracted.extend(
@@ -113,6 +117,8 @@ def extract_document(
                 data_dir=resolved_data_dir,
                 min_confidence=min_confidence,
                 max_repair_attempts=max_repair_attempts,
+                parse_meta=parse_meta,
+                bucket_context=bucket_context,
             )
         )
 
@@ -129,6 +135,8 @@ def extract_section(
     data_dir: Path | None = None,
     min_confidence: float = 0.0,
     max_repair_attempts: int = 2,
+    parse_meta: ParseMetadata | None = None,
+    bucket_context: list[BucketContext] | None = None,
 ) -> list[ExtractedRecord]:
     """Extract typed records from one canonical section."""
     if record_types is None:
@@ -139,8 +147,14 @@ def extract_section(
 
     extracted: list[ExtractedRecord] = []
     section_quality = load_section_quality(section, data_dir=resolved_data_dir)
-    parse_meta = load_parse_metadata(section.doc_id, data_dir=resolved_data_dir)
-    bucket_context = load_bucket_context(section.doc_id, data_dir=resolved_data_dir)
+    resolved_parse_meta = (
+        parse_meta if parse_meta is not None else load_parse_metadata(section.doc_id, data_dir=resolved_data_dir)
+    )
+    resolved_bucket_context = (
+        bucket_context
+        if bucket_context is not None
+        else load_bucket_context(section.doc_id, data_dir=resolved_data_dir)
+    )
     for record_type in resolved_record_types:
         template = load_prompt_template(record_type)
         if template.schema_ref != record_type:
@@ -190,13 +204,13 @@ def extract_section(
             attach_provenance(
                 record,
                 section,
-                parse_meta,
+                resolved_parse_meta,
                 ExtractionMetadata(
                     model=model,
                     prompt_template=f"extraction/{record_type}",
                     prompt_version=template.version,
                     confidence=record.confidence,
-                    bucket_context=bucket_context,
+                    bucket_context=resolved_bucket_context,
                 ),
             )
             for record in scored_records
