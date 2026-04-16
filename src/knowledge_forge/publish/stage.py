@@ -4,16 +4,15 @@ from __future__ import annotations
 
 import json
 from collections.abc import Iterable
-from datetime import datetime, timezone
 from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict, Field
 from yaml import safe_dump
 
-from knowledge_forge import __version__
 from knowledge_forge.compile.source_pages import CompiledPage
 from knowledge_forge.intake.importer import get_data_dir
 from knowledge_forge.intake.manifest import slugify
+from knowledge_forge.publish.manifest import PublishManifest, generate_publish_manifest
 
 TOPIC_DIRECTORY_MAP = {
     "startup_procedure": "procedures",
@@ -23,23 +22,6 @@ TOPIC_DIRECTORY_MAP = {
     "troubleshooting": "troubleshooting",
     "specifications": "specs",
 }
-
-
-class PublishManifest(BaseModel):
-    """Persisted metadata for one staged publish run."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    publish_run_id: str
-    generated_at: str
-    knowledge_forge_version: str
-    source_documents: list[str]
-    buckets: list[str]
-    files_written: list[str]
-    files_updated: list[str]
-    files_removed: list[str]
-    extraction_version: str
-    compilation_version: str
 
 
 class StagedPublish(BaseModel):
@@ -116,17 +98,15 @@ def stage_publish(
                 snapshot_path.write_text(json.dumps(source_document, indent=2, sort_keys=True), encoding="utf-8")
                 source_snapshot_paths.append(snapshot_path)
 
-    manifest = PublishManifest(
-        publish_run_id=publish_run_id,
-        generated_at=_utc_timestamp(),
-        knowledge_forge_version=__version__,
-        source_documents=sorted(source_documents),
-        buckets=sorted(buckets),
-        files_written=sorted(files_written),
-        files_updated=[],
-        files_removed=[],
-        extraction_version=_join_versions(extraction_versions),
-        compilation_version=_join_versions(compilation_versions),
+    manifest = PublishManifest.model_validate(
+        generate_publish_manifest(
+            publish_run_id,
+            files_written,
+            source_documents=source_documents,
+            buckets=buckets,
+            extraction_version=_join_versions(extraction_versions),
+            compilation_version=_join_versions(compilation_versions),
+        )
     )
     manifest_path = publish_root / "_manifests" / f"{publish_run_id}.json"
     manifest_path.parent.mkdir(parents=True, exist_ok=True)
@@ -203,7 +183,3 @@ def _source_documents(frontmatter: dict[str, object]) -> list[dict[str, str]]:
 def _join_versions(values: Iterable[str]) -> str:
     ordered = sorted({value for value in values if value})
     return ", ".join(ordered) if ordered else "unknown"
-
-
-def _utc_timestamp() -> str:
-    return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")

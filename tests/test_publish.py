@@ -12,7 +12,13 @@ from yaml import safe_dump
 
 from knowledge_forge.cli import cli
 from knowledge_forge.compile.source_pages import CompiledPage, CompileMetadata
-from knowledge_forge.publish import create_publish_pr, stage_publish, validate_publish_output
+from knowledge_forge.publish import (
+    create_publish_pr,
+    generate_publish_manifest,
+    list_publish_runs,
+    stage_publish,
+    validate_publish_output,
+)
 from knowledge_forge.publish.pr import PRResult
 
 
@@ -184,6 +190,28 @@ def test_stage_publish_maps_compiled_pages_and_generates_publish_manifest(tmp_pa
     assert validate_publish_output(staged.stage_dir).valid is True
 
 
+def test_generate_publish_manifest_returns_expected_contract_fields() -> None:
+    manifest = generate_publish_manifest(
+        "kf-20260416-001",
+        ["source-index/doc-1.md", "procedures/doc-1-startup.md"],
+        source_documents=["doc-1"],
+        buckets=["honeywell/dc1000/family"],
+        files_updated=["specs/doc-1-specs.md"],
+        files_removed=["source-index/doc-old.md"],
+        extraction_version="extract-v1",
+        compilation_version="compile-v1",
+    )
+
+    assert manifest["publish_run_id"] == "kf-20260416-001"
+    assert manifest["knowledge_forge_version"]
+    assert manifest["source_documents"] == ["doc-1"]
+    assert manifest["buckets"] == ["honeywell/dc1000/family"]
+    assert manifest["files_written"] == ["procedures/doc-1-startup.md", "source-index/doc-1.md"]
+    assert manifest["files_updated"] == ["specs/doc-1-specs.md"]
+    assert manifest["files_removed"] == ["source-index/doc-old.md"]
+    assert manifest["generated_at"].endswith("Z")
+
+
 def test_validate_publish_output_accepts_supported_target_directories(tmp_path: Path) -> None:
     stage_dir = tmp_path / "data" / "publish" / "kf-20260416-002"
     publish_root = stage_dir / "repo-wiki" / "knowledge"
@@ -341,6 +369,56 @@ def test_publish_validate_cli_reports_success_and_failure(tmp_path: Path) -> Non
     assert failure.exit_code != 0
     assert "Valid: no" in failure.output
     assert "publish validation failed" in failure.output
+
+
+def test_list_publish_runs_reports_valid_and_missing_manifest_runs(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    valid_stage_dir = data_dir / "publish" / "kf-20260416-010"
+    missing_stage_dir = data_dir / "publish" / "kf-20260416-011"
+
+    _write_markdown(
+        valid_stage_dir / "repo-wiki" / "knowledge" / "source-index" / "doc-1.md",
+        _frontmatter(doc_id="doc-1", source_documents=[{"doc_id": "doc-1"}]),
+    )
+    _write_manifest(valid_stage_dir, "kf-20260416-010", files_written=["source-index/doc-1.md"])
+    missing_stage_dir.mkdir(parents=True, exist_ok=True)
+
+    runs = list_publish_runs(data_dir)
+
+    assert [run.publish_run_id for run in runs] == ["kf-20260416-010", "kf-20260416-011"]
+    assert runs[0].status == "valid"
+    assert runs[1].status == "missing-manifest"
+
+
+def test_publish_log_and_inspect_cli_report_staged_history(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    stage_dir = data_dir / "publish" / "kf-20260416-012"
+    _write_markdown(
+        stage_dir / "repo-wiki" / "knowledge" / "source-index" / "doc-1.md",
+        _frontmatter(
+            doc_id="doc-1",
+            source_documents=[{"doc_id": "doc-1", "manufacturer": "Honeywell", "family": "DC1000"}],
+        ),
+    )
+    _write_manifest(
+        stage_dir,
+        "kf-20260416-012",
+        files_written=["source-index/doc-1.md"],
+    )
+
+    runner = CliRunner()
+    env = {"KNOWLEDGE_FORGE_DATA_DIR": str(data_dir)}
+
+    log_result = runner.invoke(cli, ["publish", "log"], env=env)
+    assert log_result.exit_code == 0
+    assert "RUN ID\tSTATUS\tGENERATED AT\tSTAGE DIR" in log_result.output
+    assert "kf-20260416-012\tvalid" in log_result.output
+
+    inspect_result = runner.invoke(cli, ["publish", "inspect", "kf-20260416-012"], env=env)
+    assert inspect_result.exit_code == 0
+    assert "Publish run: kf-20260416-012" in inspect_result.output
+    assert "Source documents: honeywell-dc1000-service-manual-rev-3" in inspect_result.output
+    assert "write\tsource-index/doc-1.md" in inspect_result.output
 
 
 def test_create_publish_pr_dry_run_syncs_only_knowledge_subtree(tmp_path: Path) -> None:
