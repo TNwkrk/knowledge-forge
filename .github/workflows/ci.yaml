@@ -22,13 +22,19 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Classify change scope
+      - name: Classify CI mode
         id: classify
         shell: bash
         run: |
           if [[ "${{ github.event_name }}" == "push" ]]; then
-            echo "classification=code-affecting" >> "$GITHUB_OUTPUT"
             echo "ci_mode=full" >> "$GITHUB_OUTPUT"
+            echo "classification=code-affecting" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if [[ "${{ github.event.pull_request.draft }}" == "true" ]]; then
+            echo "ci_mode=draft-fast-pass" >> "$GITHUB_OUTPUT"
+            echo "classification=draft-pr" >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
@@ -44,7 +50,8 @@ jobs:
           for path in "${changed_files[@]}"; do
             [[ -z "$path" ]] && continue
             case "$path" in
-              *.md) ;;
+              *.md|docs/*)
+                ;;
               *)
                 docs_only=false
                 break
@@ -53,14 +60,11 @@ jobs:
           done
 
           if [[ "$docs_only" == "true" ]]; then
+            echo "ci_mode=docs-only-fast-pass" >> "$GITHUB_OUTPUT"
             echo "classification=docs-only" >> "$GITHUB_OUTPUT"
-            echo "ci_mode=docs-only" >> "$GITHUB_OUTPUT"
-          elif [[ "${{ github.event.pull_request.draft }}" == "true" ]]; then
-            echo "classification=code-affecting" >> "$GITHUB_OUTPUT"
-            echo "ci_mode=preflight" >> "$GITHUB_OUTPUT"
           else
-            echo "classification=code-affecting" >> "$GITHUB_OUTPUT"
             echo "ci_mode=full" >> "$GITHUB_OUTPUT"
+            echo "classification=code-affecting" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Report CI mode
@@ -68,19 +72,27 @@ jobs:
           echo "Classification: ${{ steps.classify.outputs.classification }}"
           echo "CI mode: ${{ steps.classify.outputs.ci_mode }}"
 
+      - name: Complete draft PR fast pass
+        if: ${{ steps.classify.outputs.ci_mode == 'draft-fast-pass' }}
+        run: echo "Draft PR detected; skipping CI until ready for review."
+
+      - name: Complete docs-only fast pass
+        if: ${{ steps.classify.outputs.ci_mode == 'docs-only-fast-pass' }}
+        run: echo "Docs-only PR detected; skipping Python setup and test work."
+
       - name: Set up Python
-        if: ${{ steps.classify.outputs.ci_mode != 'docs-only' }}
+        if: ${{ steps.classify.outputs.ci_mode == 'full' }}
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
           cache: "pip"
 
       - name: Install dependencies
-        if: ${{ steps.classify.outputs.ci_mode != 'docs-only' }}
+        if: ${{ steps.classify.outputs.ci_mode == 'full' }}
         run: python -m pip install -e ".[dev]"
 
       - name: Run Ruff check
-        if: ${{ steps.classify.outputs.ci_mode != 'docs-only' }}
+        if: ${{ steps.classify.outputs.ci_mode == 'full' }}
         run: ruff check .
 
       - name: Run Ruff format check
@@ -90,7 +102,3 @@ jobs:
       - name: Run pytest with coverage
         if: ${{ steps.classify.outputs.ci_mode == 'full' }}
         run: pytest --cov=knowledge_forge --cov-report=term-missing
-
-      - name: Complete docs-only fast pass
-        if: ${{ steps.classify.outputs.ci_mode == 'docs-only' }}
-        run: echo "Docs-only pull request detected; skipping Python setup and test work."
