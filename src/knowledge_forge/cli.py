@@ -9,9 +9,12 @@ import click
 
 from knowledge_forge.bucketing.assigner import bucket_manifest, bucket_unassigned_manifests
 from knowledge_forge.compile import (
+    compile_all_overviews,
     compile_all_source_pages,
     compile_all_topic_pages,
     compile_bucket_topic_pages,
+    compile_family_overview,
+    compile_manufacturer_index,
     compile_source_page,
 )
 from knowledge_forge.extract import audit_document_provenance, extract_document
@@ -511,6 +514,50 @@ def compile_topic_pages(bucket_id: str | None, compile_all: bool, config_path: P
     click.echo(f"Compiled {len(pages)} topic page(s) for {bucket_id}")
     for page in pages:
         click.echo(f"{page.frontmatter['topic']}\t{page.output_path}")
+
+
+@compile.command("overviews")
+@click.argument("target", required=False, type=str)
+@click.option("--all", "compile_all", is_flag=True, help="Compile every family overview and manufacturer index.")
+@click.option(
+    "--manufacturer",
+    "manufacturer_only",
+    is_flag=True,
+    help="Treat TARGET as a manufacturer instead of a family bucket.",
+)
+def compile_overviews(target: str | None, compile_all: bool, manufacturer_only: bool) -> None:
+    """Compile family overview pages and manufacturer indexes."""
+    if compile_all and target is not None:
+        raise click.ClickException("pass either a target or --all, not both")
+    if not compile_all and target is None:
+        raise click.ClickException("pass a family bucket/manufacturer or use --all")
+
+    data_dir = get_data_dir()
+    if compile_all:
+        try:
+            pages = compile_all_overviews(data_dir=data_dir)
+        except (FileNotFoundError, ValueError, KeyError) as exc:
+            raise click.ClickException(str(exc)) from exc
+        if not pages:
+            click.echo("No extracted family buckets found to compile.")
+            return
+        click.echo(f"Compiled {len(pages)} overview page(s).")
+        for page in pages:
+            click.echo(f"{page.frontmatter.get('page_type', 'overview')}\t{page.output_path}")
+        return
+
+    try:
+        page = (
+            compile_manufacturer_index(target, data_dir=data_dir)
+            if manufacturer_only
+            else compile_family_overview(target, data_dir=data_dir)
+        )
+    except (FileNotFoundError, ValueError, KeyError) as exc:
+        raise click.ClickException(str(exc)) from exc
+
+    descriptor = "manufacturer index" if manufacturer_only else "family overview"
+    click.echo(f"Compiled {descriptor} for {target}")
+    click.echo(f"Output: {page.output_path}")
 
 
 @inference.command("costs")

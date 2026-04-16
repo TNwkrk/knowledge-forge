@@ -8,7 +8,14 @@ from pathlib import Path
 from click.testing import CliRunner
 
 from knowledge_forge.cli import cli
-from knowledge_forge.compile import compile_bucket_topic_pages, compile_source_page, compile_topic_page
+from knowledge_forge.compile import (
+    compile_all_overviews,
+    compile_bucket_topic_pages,
+    compile_family_overview,
+    compile_manufacturer_index,
+    compile_source_page,
+    compile_topic_page,
+)
 from knowledge_forge.intake.importer import RegistrationRequest, load_manifest, register_document
 from knowledge_forge.intake.manifest import BucketAssignment, DocumentStatus
 from knowledge_forge.parse.sectioning import Section
@@ -20,17 +27,26 @@ def _write_pdf(path: Path) -> Path:
     return path
 
 
-def _register_extracted_fixture(pdf_path: Path, data_dir: Path, *, revision: str = "Rev 3") -> str:
+def _register_extracted_fixture(
+    pdf_path: Path,
+    data_dir: Path,
+    *,
+    revision: str = "Rev 3",
+    document_type: str = "Service Manual",
+    document_class: str = "authoritative-technical",
+    bucket_dimension: str = "family",
+) -> str:
     request = RegistrationRequest(
         pdf_path=pdf_path,
         manufacturer="Honeywell",
         family="DC1000",
         model_applicability=["DC1000", "DC1200"],
-        document_type="Service Manual",
+        document_type=document_type,
         revision=revision,
         publication_date=None,
         language="en",
         priority=1,
+        document_class=document_class,
     )
     result = register_document(request, data_dir=data_dir)
     manifest_path = data_dir / "manifests" / f"{result.manifest.doc_id}.yaml"
@@ -42,7 +58,7 @@ def _register_extracted_fixture(pdf_path: Path, data_dir: Path, *, revision: str
                     BucketAssignment(
                         doc_id=result.manifest.doc_id,
                         bucket_id="honeywell/dc1000/family",
-                        dimension="family",
+                        dimension=bucket_dimension,
                         value="DC1000",
                     )
                 ]
@@ -96,6 +112,10 @@ def _write_record(data_dir: Path, doc_id: str, record_type: str, record_id: str,
     path = data_dir / "extracted" / doc_id / record_type / f"{record_id}.json"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+
+
+def _ensure_extracted_doc_dir(data_dir: Path, doc_id: str) -> None:
+    (data_dir / "extracted" / doc_id).mkdir(parents=True, exist_ok=True)
 
 
 def _write_review_flag(data_dir: Path, doc_id: str, section_id: str) -> None:
@@ -546,3 +566,78 @@ def test_compile_bucket_topic_pages_and_cli_support_single_bucket_and_all(
     assert every.exit_code == 0
     assert "Compiled 2 topic page(s)." in every.output
     assert "honeywell/dc1000/family" in every.output
+
+
+def test_compile_family_overview_and_manufacturer_index_cover_mixed_document_types(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    manual_doc_id = _register_extracted_fixture(_write_pdf(tmp_path / "manual.pdf"), data_dir)
+    sop_doc_id = _register_extracted_fixture(
+        _write_pdf(tmp_path / "sop.pdf"),
+        data_dir,
+        revision="Rev SOP",
+        document_type="SOP",
+        document_class="operational",
+    )
+    topic_dir = data_dir / "compiled" / "topic-pages" / "honeywell-dc1000-family"
+    topic_dir.mkdir(parents=True, exist_ok=True)
+    (topic_dir / "startup_procedure.md").write_text("# Startup\n", encoding="utf-8")
+    (topic_dir / "troubleshooting.md").write_text("# Troubleshooting\n", encoding="utf-8")
+    _ensure_extracted_doc_dir(data_dir, manual_doc_id)
+    _ensure_extracted_doc_dir(data_dir, sop_doc_id)
+
+    family_page = compile_family_overview("honeywell/dc1000/family", data_dir=data_dir)
+    manufacturer_page = compile_manufacturer_index("Honeywell", data_dir=data_dir)
+    every_page = compile_all_overviews(data_dir=data_dir)
+
+    family_rendered = family_page.render()
+    manufacturer_rendered = manufacturer_page.render()
+
+    assert (
+        family_page.output_path
+        == data_dir / "compiled" / "overview-pages" / "manufacturers" / "honeywell" / "dc1000" / "_index.md"
+    )
+    assert "title: Honeywell DC1000 Family Overview" in family_rendered
+    assert "- Models covered: DC1000, DC1200" in family_rendered
+    assert "- `SOP`: 1" in family_rendered
+    assert "- `Service Manual`: 1" in family_rendered
+    assert "## Quality Summary" in family_rendered
+    assert "- `authoritative-technical`: 1" in family_rendered
+    assert "- `operational`: 1" in family_rendered
+    assert "[Startup Procedure](../../../topic-pages/honeywell-dc1000-family/startup_procedure.md)" in family_rendered
+
+    assert (
+        manufacturer_page.output_path
+        == data_dir / "compiled" / "overview-pages" / "manufacturers" / "honeywell" / "_index.md"
+    )
+    assert "title: Honeywell Manufacturer Index" in manufacturer_rendered
+    assert "[DC1000](dc1000/_index.md)" in manufacturer_rendered
+    assert "topics: Startup Procedure, Troubleshooting" in manufacturer_rendered
+
+    assert {page.frontmatter["page_type"] for page in every_page} == {"family_overview", "manufacturer_index"}
+    assert {entry["doc_id"] for entry in family_page.frontmatter["source_documents"]} == {manual_doc_id, sop_doc_id}
+
+
+def test_compile_overviews_cli_supports_family_bucket_manufacturer_and_all(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    doc_id = _register_extracted_fixture(_write_pdf(tmp_path / "manual.pdf"), data_dir)
+    topic_dir = data_dir / "compiled" / "topic-pages" / "honeywell-dc1000-family"
+    topic_dir.mkdir(parents=True, exist_ok=True)
+    (topic_dir / "startup_procedure.md").write_text("# Startup\n", encoding="utf-8")
+    _ensure_extracted_doc_dir(data_dir, doc_id)
+
+    runner = CliRunner()
+    env = {"KNOWLEDGE_FORGE_DATA_DIR": str(data_dir)}
+
+    family = runner.invoke(cli, ["compile", "overviews", "honeywell/dc1000/family"], env=env)
+    assert family.exit_code == 0
+    assert "Compiled family overview for honeywell/dc1000/family" in family.output
+
+    manufacturer = runner.invoke(cli, ["compile", "overviews", "--manufacturer", "Honeywell"], env=env)
+    assert manufacturer.exit_code == 0
+    assert "Compiled manufacturer index for Honeywell" in manufacturer.output
+
+    every = runner.invoke(cli, ["compile", "overviews", "--all"], env=env)
+    assert every.exit_code == 0
+    assert "Compiled 2 overview page(s)." in every.output
+    assert "family_overview" in every.output
+    assert "manufacturer_index" in every.output
