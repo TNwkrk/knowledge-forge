@@ -13,17 +13,25 @@ from knowledge_forge.intake.manifest import DocumentStatus
 from knowledge_forge.parse import section_all_documents, section_document
 
 
-def _register_parsed_fixture(data_dir: Path, pdf_path: Path, *, revision: str = "Rev 3") -> str:
+def _register_parsed_fixture(
+    data_dir: Path,
+    pdf_path: Path,
+    *,
+    revision: str = "Rev 3",
+    document_type: str = "Service Manual",
+    document_class: str = "authoritative-technical",
+) -> str:
     request = RegistrationRequest(
         pdf_path=pdf_path,
         manufacturer="Honeywell",
         family="DC1000",
         model_applicability=["DC1000"],
-        document_type="Service Manual",
+        document_type=document_type,
         revision=revision,
         publication_date=None,
         language="en",
         priority=1,
+        document_class=document_class,
     )
     result = register_document(request, data_dir=data_dir)
     manifest_path = data_dir / "manifests" / f"{result.manifest.doc_id}.yaml"
@@ -256,6 +264,185 @@ def test_section_document_handles_documents_without_headings(tmp_path: Path) -> 
     assert sections[0].title == "Plain Service Notes"
     assert sections[0].section_type == "other"
     assert sections[0].page_range == (1, 2)
+
+
+def test_section_document_types_operational_sections_and_preserves_ordered_steps(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    doc_id = _register_parsed_fixture(
+        data_dir,
+        _write_pdf(tmp_path / "sop.pdf"),
+        revision="Rev SOP",
+        document_type="SOP",
+        document_class="operational",
+    )
+    structure = {
+        "doc_id": doc_id,
+        "parser": "docling",
+        "parser_version": "test",
+        "page_count": 3,
+        "texts": [
+            {"item_ref": "#/texts/0", "label": "title", "text": "DC1000 Lockout SOP", "page_numbers": [1]},
+            {
+                "item_ref": "#/texts/1",
+                "label": "section_header",
+                "text": "Standard Operating Procedure",
+                "page_numbers": [1],
+            },
+            {
+                "item_ref": "#/texts/2",
+                "label": "list_item",
+                "text": "1. De-energize the controller.",
+                "page_numbers": [1],
+            },
+            {"item_ref": "#/texts/3", "label": "list_item", "text": "2. Verify zero voltage.", "page_numbers": [1]},
+            {"item_ref": "#/texts/4", "label": "section_header", "text": "Inspection Checklist", "page_numbers": [2]},
+            {"item_ref": "#/texts/5", "label": "list_item", "text": "- [ ] Confirm panel is dry.", "page_numbers": [2]},
+            {
+                "item_ref": "#/texts/6",
+                "label": "list_item",
+                "text": "- [ ] Inspect all terminal lugs.",
+                "page_numbers": [2],
+            },
+            {"item_ref": "#/texts/7", "label": "section_header", "text": "Commissioning", "page_numbers": [3]},
+            {"item_ref": "#/texts/8", "label": "text", "text": "Step 1: Restore line power.", "page_numbers": [3]},
+            {
+                "item_ref": "#/texts/9",
+                "label": "text",
+                "text": "Step 2: Record ready-state amperage.",
+                "page_numbers": [3],
+            },
+        ],
+        "tables": [],
+        "pages": [
+            {"page_number": 1, "width": 612, "height": 792, "source_ref": "p1"},
+            {"page_number": 2, "width": 612, "height": 792, "source_ref": "p2"},
+            {"page_number": 3, "width": 612, "height": 792, "source_ref": "p3"},
+        ],
+    }
+    headings = {
+        "doc_id": doc_id,
+        "headings": [
+            {
+                "title": "DC1000 Lockout SOP",
+                "label": "title",
+                "level": 1,
+                "page_number": 1,
+                "item_ref": "#/texts/0",
+                "children": [
+                    {
+                        "title": "Standard Operating Procedure",
+                        "label": "section_header",
+                        "level": 2,
+                        "page_number": 1,
+                        "item_ref": "#/texts/1",
+                        "children": [],
+                    },
+                    {
+                        "title": "Inspection Checklist",
+                        "label": "section_header",
+                        "level": 2,
+                        "page_number": 2,
+                        "item_ref": "#/texts/4",
+                        "children": [],
+                    },
+                    {
+                        "title": "Commissioning",
+                        "label": "section_header",
+                        "level": 2,
+                        "page_number": 3,
+                        "item_ref": "#/texts/7",
+                        "children": [],
+                    },
+                ],
+            }
+        ],
+    }
+    _write_parsed_artifacts(data_dir, doc_id=doc_id, structure=structure, headings=headings)
+
+    sections = section_document(doc_id, data_dir=data_dir)
+
+    assert [section.section_type for section in sections] == ["sop", "checklist", "commissioning"]
+    assert [step.text for step in sections[0].ordered_steps] == [
+        "De-energize the controller.",
+        "Verify zero voltage.",
+    ]
+    assert [step.text for step in sections[1].ordered_steps] == [
+        "Confirm panel is dry.",
+        "Inspect all terminal lugs.",
+    ]
+    assert [step.step_number for step in sections[2].ordered_steps] == [1, 2]
+
+
+def test_section_document_types_bulletin_and_captures_wiring_callouts(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    doc_id = _register_parsed_fixture(
+        data_dir,
+        _write_pdf(tmp_path / "bulletin.pdf"),
+        revision="Bulletin 1",
+        document_type="Service Bulletin",
+    )
+    structure = {
+        "doc_id": doc_id,
+        "parser": "docling",
+        "parser_version": "test",
+        "page_count": 2,
+        "texts": [
+            {"item_ref": "#/texts/0", "label": "title", "text": "DC1000 Service Bulletin", "page_numbers": [1]},
+            {"item_ref": "#/texts/1", "label": "section_header", "text": "Addendum A", "page_numbers": [1]},
+            {
+                "item_ref": "#/texts/2",
+                "label": "text",
+                "text": "Updated terminal torque guidance.",
+                "page_numbers": [1],
+            },
+            {"item_ref": "#/texts/3", "label": "section_header", "text": "Wiring Diagram", "page_numbers": [2]},
+            {"item_ref": "#/texts/4", "label": "text", "text": "Figure 2 Wiring Diagram", "page_numbers": [2]},
+            {"item_ref": "#/texts/5", "label": "text", "text": "A: Line input", "page_numbers": [2]},
+            {"item_ref": "#/texts/6", "label": "text", "text": "B: Alarm relay", "page_numbers": [2]},
+        ],
+        "tables": [],
+        "pages": [
+            {"page_number": 1, "width": 612, "height": 792, "source_ref": "p1"},
+            {"page_number": 2, "width": 612, "height": 792, "source_ref": "p2"},
+        ],
+    }
+    headings = {
+        "doc_id": doc_id,
+        "headings": [
+            {
+                "title": "DC1000 Service Bulletin",
+                "label": "title",
+                "level": 1,
+                "page_number": 1,
+                "item_ref": "#/texts/0",
+                "children": [
+                    {
+                        "title": "Addendum A",
+                        "label": "section_header",
+                        "level": 2,
+                        "page_number": 1,
+                        "item_ref": "#/texts/1",
+                        "children": [],
+                    },
+                    {
+                        "title": "Wiring Diagram",
+                        "label": "section_header",
+                        "level": 2,
+                        "page_number": 2,
+                        "item_ref": "#/texts/3",
+                        "children": [],
+                    },
+                ],
+            }
+        ],
+    }
+    _write_parsed_artifacts(data_dir, doc_id=doc_id, structure=structure, headings=headings)
+
+    sections = section_document(doc_id, data_dir=data_dir)
+
+    assert [section.section_type for section in sections] == ["addendum", "wiring"]
+    assert sections[1].figure_regions[0].label == "Figure 2 Wiring Diagram"
+    assert sections[1].figure_regions[0].callouts == ["A: Line input", "B: Alarm relay"]
 
 
 def test_section_document_ignores_page_headers_as_section_boundaries(tmp_path: Path) -> None:

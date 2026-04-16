@@ -11,7 +11,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
-from knowledge_forge.intake.importer import get_data_dir, list_manifests
+from knowledge_forge.intake.importer import get_data_dir, list_manifests, load_manifest
 from knowledge_forge.intake.manifest import slugify
 from knowledge_forge.parse.quality import HEADING_LABELS, HeadingNode, HeadingTreeArtifact, StructuredParseArtifact
 
@@ -26,8 +26,36 @@ SectionType = Literal[
     "specifications",
     "parts",
     "revision_notes",
+    "workflow",
+    "sop",
+    "checklist",
+    "inspection",
+    "commissioning",
+    "wiring",
+    "drawing",
+    "diagram",
+    "addendum",
+    "bulletin",
+    "seasonal-procedure",
     "other",
 ]
+
+
+class SectionStep(BaseModel):
+    """One ordered step preserved from a structured operational section."""
+
+    step_number: int = Field(ge=1)
+    text: str
+    page_number: int | None = Field(default=None, ge=1)
+    item_ref: str | None = None
+
+
+class FigureRegion(BaseModel):
+    """A page-scoped figure region with any parsed callout text."""
+
+    label: str
+    page_range: tuple[int | None, int | None] = Field(default=(None, None))
+    callouts: list[str] = Field(default_factory=list)
 
 
 class Section(BaseModel):
@@ -41,6 +69,8 @@ class Section(BaseModel):
     page_range: tuple[int | None, int | None] = Field(default=(None, None))
     heading_path: list[str] = Field(default_factory=list)
     parent_section_id: str | None = None
+    ordered_steps: list[SectionStep] = Field(default_factory=list)
+    figure_regions: list[FigureRegion] = Field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -73,10 +103,26 @@ class _DraftSection:
     section_type: SectionType
     content: str
     page_range: tuple[int | None, int | None]
+    ordered_steps: list[SectionStep]
+    figure_regions: list[FigureRegion]
     item_ref: str | None = None
 
 
-_SECTION_PATTERNS: tuple[tuple[SectionType, tuple[str, ...]], ...] = (
+@dataclass(frozen=True)
+class _SectionContext:
+    document_type: str = ""
+    document_class: str = ""
+
+    @property
+    def normalized_document_type(self) -> str:
+        return slugify(self.document_type)
+
+    @property
+    def normalized_document_class(self) -> str:
+        return self.document_class.strip().casefold()
+
+
+_MANUAL_SECTION_PATTERNS: tuple[tuple[SectionType, tuple[str, ...]], ...] = (
     ("revision_notes", ("revision", "change log", "changelog", "release note", "amendment", "history")),
     ("troubleshooting", ("troubleshooting", "diagnostic", "fault", "alarm", "error code", "problem")),
     ("specifications", ("specification", "specifications", "technical data", "ratings", "dimensions", "electrical")),
@@ -87,6 +133,61 @@ _SECTION_PATTERNS: tuple[tuple[SectionType, tuple[str, ...]], ...] = (
     ("shutdown", ("shutdown", "shut down", "stop procedure", "power off", "decommission")),
     ("safety", ("safety", "warning", "caution", "danger", "hazard", "precaution")),
     ("parts", ("parts", "spare part", "replacement part", "bill of materials", "bom")),
+)
+
+_OPERATIONAL_SECTION_PATTERNS: tuple[tuple[SectionType, tuple[str, ...]], ...] = (
+    (
+        "seasonal-procedure",
+        ("winterization", "seasonal procedure", "season startup", "spring startup", "summer startup"),
+    ),
+    ("sop", ("standard operating procedure", "sop")),
+    ("checklist", ("checklist", "check list", "verification list", "task list")),
+    ("inspection", ("inspection", "inspection sheet", "inspection template", "inspection form")),
+    ("commissioning", ("commissioning", "commissioning checklist", "commissioning sheet", "acceptance test")),
+    ("workflow", ("workflow", "procedure", "process", "sequence of operation", "method")),
+)
+
+_DRAWING_SECTION_PATTERNS: tuple[tuple[SectionType, tuple[str, ...]], ...] = (
+    ("wiring", ("wiring diagram", "terminal wiring", "wiring", "connection diagram", "terminal layout")),
+    ("drawing", ("engineering drawing", "mechanical drawing", "drawing", "layout")),
+    ("diagram", ("diagram", "schematic", "figure", "illustration", "p&id", "pid")),
+)
+
+_BULLETIN_SECTION_PATTERNS: tuple[tuple[SectionType, tuple[str, ...]], ...] = (
+    ("addendum", ("addendum", "supplement", "supplemental", "appendix update")),
+    ("bulletin", ("service bulletin", "bulletin", "field notice", "notice", "advisory")),
+    ("revision_notes", ("revision", "release note", "change log", "history", "supersession")),
+)
+
+_DOCUMENT_TYPE_DEFAULTS: dict[str, SectionType] = {
+    "startup-procedure": "workflow",
+    "shutdown-procedure": "workflow",
+    "winterization-procedure": "seasonal-procedure",
+    "pm-procedure": "workflow",
+    "sop": "sop",
+    "checklist": "checklist",
+    "service-bulletin": "bulletin",
+    "bulletin": "bulletin",
+    "addendum": "addendum",
+    "engineering-drawing": "drawing",
+    "wiring-diagram": "wiring",
+    "pid": "diagram",
+    "inspection-template": "inspection",
+    "commissioning-sheet": "commissioning",
+    "best-practice": "workflow",
+    "safety-procedure": "workflow",
+}
+
+_STEP_NUMBER_PATTERN = re.compile(r"^(?:step\s+)?(?P<number>\d+)[\).\:\-]?\s+(?P<body>.+)$", re.IGNORECASE)
+_CHECKBOX_PATTERN = re.compile(r"^(?:[-*•]\s+)?\[(?: |x|X)\]\s+(?P<body>.+)$")
+_BULLET_PATTERN = re.compile(r"^(?:[-*•])\s+(?P<body>.+)$")
+_FIGURE_LABEL_PATTERN = re.compile(
+    r"^(?P<label>(?:figure|fig\.?|diagram|drawing|wiring diagram|schematic|p&id)[A-Za-z0-9.\- ]*)$",
+    re.IGNORECASE,
+)
+_CALLOUT_PATTERN = re.compile(
+    r"^(?:callout\s+)?(?:[A-Z]{1,3}|\d{1,3}|[A-Z]\d{1,2})[\)\.\:\-]\s+.+$",
+    re.IGNORECASE,
 )
 
 
@@ -103,8 +204,17 @@ def section_document(doc_id: str, *, data_dir: Path | None = None) -> list[Secti
 
     structure = StructuredParseArtifact.model_validate_json(structure_path.read_text(encoding="utf-8"))
     heading_tree = HeadingTreeArtifact.model_validate_json(headings_path.read_text(encoding="utf-8"))
+    manifest = load_manifest(resolved_data_dir, doc_id)
 
-    sections = _build_sections(doc_id=doc_id, structure=structure, heading_tree=heading_tree)
+    sections = _build_sections(
+        doc_id=doc_id,
+        structure=structure,
+        heading_tree=heading_tree,
+        context=_SectionContext(
+            document_type=manifest.document.document_type,
+            document_class=manifest.document.document_class,
+        ),
+    )
     _persist_sections(sections, resolved_data_dir)
     return sections
 
@@ -127,12 +237,13 @@ def _build_sections(
     doc_id: str,
     structure: StructuredParseArtifact,
     heading_tree: HeadingTreeArtifact,
+    context: _SectionContext,
 ) -> list[Section]:
     heading_lookup = {
         entry.item_ref: entry for entry in _flatten_headings(heading_tree.headings) if entry.item_ref is not None
     }
     heading_events = _build_heading_events(structure, heading_lookup)
-    draft_sections = _draft_sections(doc_id=doc_id, structure=structure, heading_events=heading_events)
+    draft_sections = _draft_sections(doc_id=doc_id, structure=structure, heading_events=heading_events, context=context)
 
     item_ref_to_section_id: dict[str, str] = {}
     sections: list[Section] = []
@@ -150,6 +261,8 @@ def _build_sections(
                 page_range=draft.page_range,
                 heading_path=list(draft.heading_path),
                 parent_section_id=None,
+                ordered_steps=draft.ordered_steps,
+                figure_regions=draft.figure_regions,
             )
         )
 
@@ -165,6 +278,7 @@ def _draft_sections(
     doc_id: str,
     structure: StructuredParseArtifact,
     heading_events: list[_HeadingEvent],
+    context: _SectionContext,
 ) -> list[_DraftSection]:
     non_section_heading_labels = {
         "title",
@@ -187,9 +301,15 @@ def _draft_sections(
                 title=title,
                 heading_path=(title,),
                 parent_item_ref=None,
-                section_type=_classify_section(title, content),
+                section_type=_classify_section(title, content, heading_path=(title,), context=context),
                 content=content,
                 page_range=_page_range_for_items(body_items, tables),
+                ordered_steps=_extract_ordered_steps(body_items, section_type="other", context=context),
+                figure_regions=_extract_figure_regions(
+                    title=title,
+                    body_items=body_items,
+                    section_type="other",
+                ),
             )
         )
         return drafts
@@ -209,14 +329,26 @@ def _draft_sections(
         assigned_table_indexes.update(table_indexes)
         content = _render_section_content(title=None, body_items=preamble_items, tables=preamble_tables)
         if content.strip():
+            section_type = _classify_section(
+                preamble_title,
+                content,
+                heading_path=(preamble_title,),
+                context=context,
+            )
             drafts.append(
                 _DraftSection(
                     title=preamble_title,
                     heading_path=(preamble_title,),
                     parent_item_ref=None,
-                    section_type="other",
+                    section_type=section_type,
                     content=content,
                     page_range=_page_range_for_items(preamble_items, preamble_tables),
+                    ordered_steps=_extract_ordered_steps(preamble_items, section_type=section_type, context=context),
+                    figure_regions=_extract_figure_regions(
+                        title=preamble_title,
+                        body_items=preamble_items,
+                        section_type=section_type,
+                    ),
                 )
             )
 
@@ -233,14 +365,21 @@ def _draft_sections(
         )
         assigned_table_indexes.update(table_indexes)
         content = _render_section_content(title=event.title, body_items=body_items, tables=tables)
+        section_type = _classify_section(event.title, content, heading_path=event.path, context=context)
         drafts.append(
             _DraftSection(
                 title=event.title,
                 heading_path=event.path,
                 parent_item_ref=event.parent_item_ref,
-                section_type=_classify_section(event.title, content),
+                section_type=section_type,
                 content=content,
                 page_range=_page_range_for_items(body_items, tables, fallback_page=event.page_number),
+                ordered_steps=_extract_ordered_steps(body_items, section_type=section_type, context=context),
+                figure_regions=_extract_figure_regions(
+                    title=event.title,
+                    body_items=body_items,
+                    section_type=section_type,
+                ),
                 item_ref=event.item_ref,
             )
         )
@@ -425,14 +564,219 @@ def _first_page_number(items: list[object]) -> int | None:
     return None
 
 
-def _classify_section(title: str, content: str) -> SectionType:
-    del content
-    haystack = title.casefold()
-    haystack = re.sub(r"[^a-z0-9]+", " ", haystack)
-    for section_type, patterns in _SECTION_PATTERNS:
-        if any(pattern in haystack for pattern in patterns):
+def _classify_section(
+    title: str,
+    content: str,
+    *,
+    heading_path: tuple[str, ...],
+    context: _SectionContext,
+) -> SectionType:
+    title_haystack = _normalize_classifier_text(title)
+    parent_haystack = _normalize_classifier_text(" ".join(heading_path[1:-1]))
+    content_haystack = _normalize_classifier_text(content[:500])
+    patterns = _patterns_for_context(context)
+
+    for section_type, candidates in patterns:
+        if any(candidate in title_haystack for candidate in candidates):
             return section_type
+    if parent_haystack:
+        for section_type, candidates in patterns:
+            if any(candidate in parent_haystack for candidate in candidates):
+                return section_type
+    document_default = _DOCUMENT_TYPE_DEFAULTS.get(context.normalized_document_type)
+    if document_default is not None and title_haystack not in {"overview", "notes", "instructions"}:
+        return document_default
+    if _title_is_content_ambiguous(title_haystack):
+        for section_type, candidates in patterns:
+            if any(candidate in content_haystack for candidate in candidates):
+                return section_type
     return "other"
+
+
+def _patterns_for_context(context: _SectionContext) -> tuple[tuple[SectionType, tuple[str, ...]], ...]:
+    document_type = context.normalized_document_type
+    if (
+        document_type
+        in {
+            "sop",
+            "checklist",
+            "startup-procedure",
+            "shutdown-procedure",
+            "winterization-procedure",
+            "pm-procedure",
+            "inspection-template",
+            "commissioning-sheet",
+            "best-practice",
+            "safety-procedure",
+        }
+        or context.normalized_document_class == "operational"
+    ):
+        return (
+            _OPERATIONAL_SECTION_PATTERNS
+            + _DRAWING_SECTION_PATTERNS
+            + _BULLETIN_SECTION_PATTERNS
+            + _MANUAL_SECTION_PATTERNS
+        )
+    if document_type in {"engineering-drawing", "wiring-diagram", "pid"}:
+        return (
+            _DRAWING_SECTION_PATTERNS
+            + _OPERATIONAL_SECTION_PATTERNS
+            + _BULLETIN_SECTION_PATTERNS
+            + _MANUAL_SECTION_PATTERNS
+        )
+    if document_type in {"service-bulletin", "bulletin", "addendum", "supplemental-guide", "supersession-notice"}:
+        return (
+            _BULLETIN_SECTION_PATTERNS
+            + _DRAWING_SECTION_PATTERNS
+            + _OPERATIONAL_SECTION_PATTERNS
+            + _MANUAL_SECTION_PATTERNS
+        )
+    return (
+        _MANUAL_SECTION_PATTERNS
+        + _OPERATIONAL_SECTION_PATTERNS
+        + _BULLETIN_SECTION_PATTERNS
+        + _DRAWING_SECTION_PATTERNS
+    )
+
+
+def _normalize_classifier_text(value: str) -> str:
+    return re.sub(r"[^a-z0-9]+", " ", value.casefold()).strip()
+
+
+def _title_is_content_ambiguous(title_haystack: str) -> bool:
+    return title_haystack in {
+        "",
+        "overview",
+        "procedure",
+        "instructions",
+        "guidance",
+        "notes",
+        "details",
+        "general",
+    }
+
+
+def _extract_ordered_steps(
+    body_items: list[object],
+    *,
+    section_type: SectionType,
+    context: _SectionContext,
+) -> list[SectionStep]:
+    step_sections = {
+        "workflow",
+        "sop",
+        "checklist",
+        "inspection",
+        "commissioning",
+        "seasonal-procedure",
+    }
+    steps: list[SectionStep] = []
+    if section_type not in step_sections and context.normalized_document_class != "operational":
+        return steps
+
+    fallback_items: list[tuple[object, str]] = []
+    next_step_number = 1
+    for item in body_items:
+        text = getattr(item, "text", "").strip()
+        label = getattr(item, "label", "")
+        if not text or label in HEADING_LABELS:
+            continue
+        for raw_line in text.splitlines():
+            line = raw_line.strip()
+            if not line:
+                continue
+            parsed = _parse_step_line(line, prefer_checklist=section_type == "checklist")
+            if parsed is not None:
+                step_number, body = parsed
+                steps.append(
+                    SectionStep(
+                        step_number=step_number or next_step_number,
+                        text=body,
+                        page_number=_first_page_number([item]),
+                        item_ref=getattr(item, "item_ref", None),
+                    )
+                )
+                next_step_number = steps[-1].step_number + 1
+                continue
+            fallback_items.append((item, line))
+
+    if steps:
+        return steps
+
+    if section_type not in step_sections:
+        return []
+
+    for step_number, (item, line) in enumerate(fallback_items, start=1):
+        steps.append(
+            SectionStep(
+                step_number=step_number,
+                text=line,
+                page_number=_first_page_number([item]),
+                item_ref=getattr(item, "item_ref", None),
+            )
+        )
+    return steps
+
+
+def _parse_step_line(line: str, *, prefer_checklist: bool) -> tuple[int | None, str] | None:
+    numbered_match = _STEP_NUMBER_PATTERN.match(line)
+    if numbered_match is not None:
+        return int(numbered_match.group("number")), numbered_match.group("body").strip()
+
+    checkbox_match = _CHECKBOX_PATTERN.match(line)
+    if checkbox_match is not None:
+        return None, checkbox_match.group("body").strip()
+
+    if prefer_checklist:
+        bullet_match = _BULLET_PATTERN.match(line)
+        if bullet_match is not None:
+            return None, bullet_match.group("body").strip()
+    return None
+
+
+def _extract_figure_regions(
+    *,
+    title: str,
+    body_items: list[object],
+    section_type: SectionType,
+) -> list[FigureRegion]:
+    drawing_section_types = {"wiring", "drawing", "diagram"}
+    if section_type not in drawing_section_types:
+        return []
+
+    regions: list[dict[str, object]] = []
+    current_region: dict[str, object] | None = None
+
+    for item in body_items:
+        text = getattr(item, "text", "").strip()
+        label = getattr(item, "label", "")
+        if not text or label in HEADING_LABELS:
+            continue
+        page_number = _first_page_number([item])
+        for raw_line in text.splitlines():
+            line = raw_line.strip()
+            if not line:
+                continue
+            figure_match = _FIGURE_LABEL_PATTERN.match(line)
+            if figure_match is not None:
+                current_region = {
+                    "label": figure_match.group("label").strip(),
+                    "page_range": (page_number, page_number),
+                    "callouts": [],
+                }
+                regions.append(current_region)
+                continue
+            if current_region is None:
+                current_region = {
+                    "label": title,
+                    "page_range": (page_number, page_number),
+                    "callouts": [],
+                }
+                regions.append(current_region)
+            if _CALLOUT_PATTERN.match(line):
+                current_region["callouts"].append(line)
+
+    return [FigureRegion.model_validate(region) for region in regions]
 
 
 def _build_section_id(*, doc_id: str, title: str, content: str) -> str:

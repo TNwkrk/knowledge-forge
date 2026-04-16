@@ -39,6 +39,17 @@ SECTION_RECORD_TYPE_MAP: dict[SectionType, list[str]] = {
     "specifications": ["spec_value"],
     "parts": ["part_reference"],
     "revision_notes": ["revision_note"],
+    "workflow": ["procedure", "warning"],
+    "sop": ["procedure", "warning"],
+    "checklist": ["procedure", "warning"],
+    "inspection": ["procedure", "warning"],
+    "commissioning": ["procedure", "warning"],
+    "wiring": ["applicability"],
+    "drawing": ["applicability"],
+    "diagram": ["applicability"],
+    "addendum": ["revision_note", "applicability"],
+    "bulletin": ["revision_note", "applicability"],
+    "seasonal-procedure": ["procedure", "warning"],
     "other": ["applicability"],
 }
 
