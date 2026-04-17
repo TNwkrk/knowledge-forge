@@ -56,8 +56,12 @@ def test_evaluate_extraction_missing_fixture_set_raises() -> None:
         evaluate_extraction("does-not-exist")
 
 
-def test_evaluate_extraction_unknown_record_type_scores_as_invalid(tmp_path: Path) -> None:
+def test_evaluate_extraction_unknown_record_type_scores_as_invalid(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """A JSON file under an unknown record type directory must not crash the harness."""
+    from knowledge_forge.evaluation import extraction_eval
+
     fixture_dir = tmp_path / "unknown-type-fixture"
     extracted_dir = fixture_dir / "extracted" / "not_a_real_type"
     extracted_dir.mkdir(parents=True)
@@ -74,9 +78,10 @@ def test_evaluate_extraction_unknown_record_type_scores_as_invalid(tmp_path: Pat
         encoding="utf-8",
     )
 
-    from knowledge_forge.evaluation.extraction_eval import _load_fixture_records
+    monkeypatch.setattr(extraction_eval, "_fixture_set_root", lambda _: tmp_path)
 
-    artifacts = _load_fixture_records(fixture_dir)
-    assert len(artifacts) == 1
-    assert artifacts[0].schema_valid is False
-    assert artifacts[0].provenance_valid is False
+    report = evaluate_extraction("unknown-type-test")
+    assert len(report.fixture_reports) == 1
+    fixture_report = report.fixture_reports[0]
+    assert fixture_report.actual_record_counts == {"not_a_real_type": 1}
+    assert fixture_report.metrics.schema_compliance_rate == 0.0
