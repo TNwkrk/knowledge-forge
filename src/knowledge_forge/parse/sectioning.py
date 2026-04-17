@@ -124,15 +124,111 @@ class _SectionContext:
 
 _MANUAL_SECTION_PATTERNS: tuple[tuple[SectionType, tuple[str, ...]], ...] = (
     ("revision_notes", ("revision", "change log", "changelog", "release note", "amendment", "history")),
-    ("troubleshooting", ("troubleshooting", "diagnostic", "fault", "alarm", "error code", "problem")),
-    ("specifications", ("specification", "specifications", "technical data", "ratings", "dimensions", "electrical")),
-    ("maintenance", ("maintenance", "inspection", "cleaning", "lubrication", "replacement")),
-    ("installation", ("installation", "mounting", "wiring", "setup", "preparation")),
-    ("configuration", ("configuration", "config", "parameter", "programming", "settings", "commissioning")),
-    ("startup", ("startup", "start up", "start-up", "initial start", "power on", "operation")),
+    (
+        "troubleshooting",
+        (
+            "troubleshooting",
+            "diagnostic",
+            "fault",
+            "alarm",
+            "error code",
+            "problem",
+            "led",
+            "indicator",
+            "status",
+            "monitoring",
+        ),
+    ),
+    (
+        "specifications",
+        (
+            "specification",
+            "specifications",
+            "technical data",
+            "ratings",
+            "dimensions",
+            "electrical",
+            "attribute",
+            "service return",
+        ),
+    ),
+    (
+        "maintenance",
+        ("maintenance", "inspection", "cleaning", "lubrication", "replacement", "replace", "battery"),
+    ),
+    (
+        "installation",
+        (
+            "installation",
+            "mounting",
+            "wiring",
+            "setup",
+            "preparation",
+            "install",
+            "adding",
+            "connect",
+            "connection",
+            "grounding",
+            "ground",
+            "bonding",
+            "bond",
+            "route",
+            "cable",
+        ),
+    ),
+    (
+        "configuration",
+        (
+            "configuration",
+            "config",
+            "parameter",
+            "programming",
+            "settings",
+            "commissioning",
+            "configure",
+            "command line interface",
+            "driver",
+            "properties",
+            "address",
+            "assign",
+            "define",
+            "select",
+            "enable",
+            "disable",
+            "vlan",
+            "dhcp",
+            "communication",
+            "message",
+            "tag",
+            "project",
+            "cli",
+            "webui",
+            "device manager",
+            "rslinx",
+            "ring supervisor",
+            "ring participant",
+            "redundant gateway",
+        ),
+    ),
+    ("startup", ("startup", "start up", "start-up", "initial start", "power on", "getting started", "power up")),
     ("shutdown", ("shutdown", "shut down", "stop procedure", "power off", "decommission")),
-    ("safety", ("safety", "warning", "caution", "danger", "hazard", "precaution")),
-    ("parts", ("parts", "spare part", "replacement part", "bill of materials", "bom")),
+    (
+        "safety",
+        (
+            "safety",
+            "warning",
+            "caution",
+            "danger",
+            "hazard",
+            "precaution",
+            "attention",
+            "important user information",
+            "explosion hazard",
+            "shock hazard",
+            "burn hazard",
+        ),
+    ),
+    ("parts", ("parts", "spare part", "replacement part", "bill of materials", "bom", "catalog number")),
 )
 
 _OPERATIONAL_SECTION_PATTERNS: tuple[tuple[SectionType, tuple[str, ...]], ...] = (
@@ -188,6 +284,85 @@ _FIGURE_LABEL_PATTERN = re.compile(
 _CALLOUT_PATTERN = re.compile(
     r"^(?:callout\s+)?(?:[A-Z]{1,3}|\d{1,3}|[A-Z]\d{1,2})[\)\.\:\-]\s+.+$",
     re.IGNORECASE,
+)
+_HEADING_NUMBER_PREFIX_PATTERN = re.compile(r"^(?:step\s+)?\d+(?:\.\d+)*[\)\.\:\-]?\s*", re.IGNORECASE)
+_SAFETY_ADMONITION_TITLES = {
+    "attention",
+    "important",
+    "warning",
+    "caution",
+    "danger",
+    "hazard",
+    "explosion hazard",
+    "shock hazard",
+    "burn hazard",
+    "important user information",
+}
+_NEUTRAL_SECTION_TITLES = {
+    "",
+    "about this publication",
+    "additional resources",
+    "application technique",
+    "continued",
+    "details",
+    "general",
+    "guidance",
+    "how are we doing",
+    "instructions",
+    "introduction",
+    "notes",
+    "notes:",
+    "overview",
+    "related documentation",
+    "related publications",
+    "using this appendix",
+    "using this chapter",
+    "what to do next",
+    "who should use this manual",
+}
+_PROCEDURAL_TITLE_PREFIXES = (
+    "add ",
+    "adding ",
+    "assign ",
+    "change ",
+    "changing ",
+    "choose ",
+    "click ",
+    "complete ",
+    "configure ",
+    "configuring ",
+    "connect ",
+    "connecting ",
+    "create ",
+    "creating ",
+    "define ",
+    "determining ",
+    "disable ",
+    "download ",
+    "downloading ",
+    "enable ",
+    "enter ",
+    "identify ",
+    "install ",
+    "mount ",
+    "monitoring ",
+    "remove ",
+    "replace ",
+    "restore ",
+    "route ",
+    "select ",
+    "set up ",
+    "setup ",
+    "specify ",
+    "verify ",
+    "view ",
+    "wire ",
+    "accessing ",
+    "communicating ",
+    "documenting ",
+    "example ",
+    "placing ",
+    "proceed ",
 )
 
 
@@ -602,12 +777,17 @@ def _classify_section(
     context: _SectionContext,
 ) -> SectionType:
     title_haystack = _normalize_classifier_text(title)
+    normalized_title = _normalize_classifier_title(title)
     parent_haystack = _normalize_classifier_text(" ".join(heading_path[1:-1]))
     content_haystack = _normalize_classifier_text(content[:500])
     patterns = _patterns_for_context(context)
+    title_variants = tuple(value for value in {title_haystack, normalized_title} if value)
+
+    if title_haystack in _SAFETY_ADMONITION_TITLES:
+        return "safety"
 
     for section_type, candidates in patterns:
-        if any(candidate in title_haystack for candidate in candidates):
+        if any(candidate in haystack for haystack in title_variants for candidate in candidates):
             return section_type
     if parent_haystack:
         for section_type, candidates in patterns:
@@ -616,10 +796,12 @@ def _classify_section(
     document_default = _DOCUMENT_TYPE_DEFAULTS.get(context.normalized_document_type)
     if document_default is not None and title_haystack not in {"overview", "notes", "instructions"}:
         return document_default
-    if _title_is_content_ambiguous(title_haystack):
+    if _should_match_content(title_haystack, normalized_title):
         for section_type, candidates in patterns:
             if any(candidate in content_haystack for candidate in candidates):
                 return section_type
+    if _looks_procedural_title(title, normalized_title):
+        return "workflow"
     return "other"
 
 
@@ -673,17 +855,27 @@ def _normalize_classifier_text(value: str) -> str:
     return re.sub(r"[^a-z0-9]+", " ", value.casefold()).strip()
 
 
-def _title_is_content_ambiguous(title_haystack: str) -> bool:
-    return title_haystack in {
-        "",
-        "overview",
-        "procedure",
-        "instructions",
-        "guidance",
-        "notes",
-        "details",
-        "general",
-    }
+def _normalize_classifier_title(value: str) -> str:
+    normalized = _normalize_classifier_text(value)
+    return _HEADING_NUMBER_PREFIX_PATTERN.sub("", normalized).strip()
+
+
+def _should_match_content(title_haystack: str, normalized_title: str) -> bool:
+    if title_haystack in _NEUTRAL_SECTION_TITLES:
+        return False
+    if _looks_procedural_title(title_haystack, normalized_title):
+        return True
+    if title_haystack in _SAFETY_ADMONITION_TITLES:
+        return True
+    if title_haystack != normalized_title and normalized_title:
+        return True
+    return len(normalized_title.split()) <= 4 and normalized_title not in _NEUTRAL_SECTION_TITLES
+
+
+def _looks_procedural_title(title: str, normalized_title: str) -> bool:
+    if title.strip() and _HEADING_NUMBER_PREFIX_PATTERN.match(title.strip()):
+        return True
+    return any(normalized_title.startswith(prefix) for prefix in _PROCEDURAL_TITLE_PREFIXES)
 
 
 def _extract_ordered_steps(
