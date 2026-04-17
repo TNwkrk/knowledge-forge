@@ -739,6 +739,45 @@ def test_compile_family_overview_and_manufacturer_index_cover_mixed_document_typ
     assert {entry["doc_id"] for entry in family_page.frontmatter["source_documents"]} == {manual_doc_id, sop_doc_id}
 
 
+def test_compile_family_overview_uses_curated_bucket_label_when_present(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    doc_id = _register_extracted_fixture(_write_pdf(tmp_path / "manual.pdf"), data_dir)
+    manifest_path = data_dir / "manifests" / f"{doc_id}.yaml"
+    manifest = load_manifest(data_dir, doc_id)
+    manifest_path.write_text(
+        manifest.model_copy(
+            update={
+                "bucket_assignments": [
+                    BucketAssignment(
+                        doc_id=doc_id,
+                        bucket_id="honeywell/pump-station-control-stack/curated-bucket",
+                        dimension="curated_bucket",
+                        value="Pump Station Control Stack",
+                    )
+                ]
+            }
+        ).to_yaml(),
+        encoding="utf-8",
+    )
+    topic_dir = data_dir / "compiled" / "topic-pages" / "honeywell-pump-station-control-stack-curated-bucket"
+    topic_dir.mkdir(parents=True, exist_ok=True)
+    (topic_dir / "startup_procedure.md").write_text("# Startup\n", encoding="utf-8")
+    _ensure_extracted_doc_dir(data_dir, doc_id)
+
+    family_page = compile_family_overview("honeywell/pump-station-control-stack/curated-bucket", data_dir=data_dir)
+
+    assert "title: Honeywell Pump Station Control Stack Family Overview" in family_page.render()
+    assert family_page.output_path == (
+        data_dir
+        / "compiled"
+        / "overview-pages"
+        / "manufacturers"
+        / "honeywell"
+        / "pump-station-control-stack"
+        / "_index.md"
+    )
+
+
 def test_compile_overviews_cli_supports_family_bucket_manufacturer_and_all(tmp_path: Path) -> None:
     data_dir = tmp_path / "data"
     doc_id = _register_extracted_fixture(_write_pdf(tmp_path / "manual.pdf"), data_dir)

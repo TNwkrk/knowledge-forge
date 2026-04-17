@@ -308,6 +308,25 @@ def test_json_schema_registry_exports_prompt_ready_schemas(record_type: str) -> 
     assert schema["type"] == "object"
     assert "source_doc_id" in schema["properties"]
     assert "bucket_context" in schema["properties"]
+    assert "$defs" not in schema
+
+
+def _contains_local_ref(value: object) -> bool:
+    if isinstance(value, dict):
+        ref = value.get("$ref")
+        if isinstance(ref, str) and ref.startswith("#/$defs/"):
+            return True
+        return any(_contains_local_ref(item) for item in value.values())
+    if isinstance(value, list):
+        return any(_contains_local_ref(item) for item in value)
+    return False
+
+
+@pytest.mark.parametrize("record_type", sorted(VALID_PAYLOADS))
+def test_json_schema_registry_inlines_local_defs_refs(record_type: str) -> None:
+    schema = get_json_schema(record_type)
+
+    assert _contains_local_ref(schema) is False
 
 
 def test_unknown_schema_lookup_raises_key_error() -> None:

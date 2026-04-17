@@ -35,6 +35,7 @@ class RegistrationRequest:
     language: str
     priority: int
     document_class: str = "authoritative-technical"
+    curated_bucket: str | None = None
     force: bool = False
 
 
@@ -186,6 +187,7 @@ def register_document(
         family=request.family,
         model_applicability=request.model_applicability,
         document_class=request.document_class,
+        curated_bucket=request.curated_bucket,
         document_type=request.document_type,
         revision=request.revision,
         publication_date=request.publication_date,
@@ -257,6 +259,7 @@ def _force_reregister_manifest(
             "family": request.family,
             "model_applicability": request.model_applicability,
             "document_class": request.document_class,
+            "curated_bucket": request.curated_bucket,
             "document_type": request.document_type,
             "revision": request.revision,
             "publication_date": request.publication_date,

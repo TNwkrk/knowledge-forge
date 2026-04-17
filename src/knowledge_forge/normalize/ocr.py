@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 import ocrmypdf
+from ocrmypdf.exceptions import MissingDependencyError
 from ocrmypdf.pdfinfo import PdfInfo
 from pdfminer.high_level import extract_text
 from pydantic import BaseModel, ConfigDict
@@ -58,6 +59,7 @@ class NormalizationSettings:
     confidence_density_target: float = 5.0
     bypass_document_types: tuple[str, ...] = ()
     skip_vector_pages: bool = True
+    fast_text_detection_page_threshold: int = 25
 
 
 def normalize_document(doc_id: str, *, data_dir: Path | None = None) -> NormalizationResult:
@@ -86,27 +88,36 @@ def normalize_document(doc_id: str, *, data_dir: Path | None = None) -> Normaliz
     needs_ocr = pages_requiring_ocr > 0
 
     if needs_ocr:
-        ocrmypdf.ocr(
+        ocr_completed = _run_ocr(
             raw_path,
             output_path,
-            language=settings.language,
-            deskew=settings.deskew,
-            clean=settings.clean,
-            optimize=settings.optimize,
+            settings=settings,
             pages=_serialize_pages(page["page_number"] for page in page_analyses if page["ocr_applied"]),
         )
+        if not ocr_completed:
+            shutil.copy2(raw_path, output_path)
+            page_analyses = [
+                {
+                    **page,
+                    "ocr_applied": False,
+                    "bypass_reason": page["bypass_reason"] or "ocr_dependency_missing",
+                }
+                for page in page_analyses
+            ]
     else:
         shutil.copy2(raw_path, output_path)
+        ocr_completed = False
 
     page_metadata = _build_page_metadata(output_path, page_analyses, settings)
+    pages_ocrd = sum(1 for page in page_metadata if page.ocr_applied)
 
     processing_time = time.perf_counter() - start
     result = NormalizationResult(
         output_path=output_path,
         input_checksum=input_checksum,
         page_count=page_count,
-        ocr_applied=needs_ocr,
-        pages_ocrd=pages_requiring_ocr,
+        ocr_applied=ocr_completed,
+        pages_ocrd=pages_ocrd,
         processing_time=processing_time,
         page_metadata=page_metadata,
     )
@@ -142,6 +153,7 @@ def _load_normalization_settings(config_path: Path | None = None) -> Normalizati
         "text_density_threshold",
         "confidence_density_target",
         "skip_vector_pages",
+        "fast_text_detection_page_threshold",
     ):
         if key in normalize_config:
             allowed[key] = normalize_config[key]
@@ -159,6 +171,13 @@ def _load_normalization_meta(meta_path: Path) -> NormalizationResult | None:
 
 def _persist_manifest_status(manifest: ManifestEntry, data_dir: Path) -> None:
     """Transition a manifest to normalized status and persist it."""
+    if manifest.document.status.value in {
+        DocumentStatus.PARSED.value,
+        DocumentStatus.EXTRACTED.value,
+        DocumentStatus.COMPILED.value,
+        DocumentStatus.PUBLISHED.value,
+    }:
+        return
     normalized = manifest.transition_status(
         DocumentStatus.NORMALIZED,
         reason="normalized via OCRmyPDF",
@@ -192,9 +211,12 @@ def _analyze_pages(
     }
     analyses: list[dict[str, Any]] = []
     for index, page in enumerate(pdf_info.pages, start=1):
-        density_before = _extract_text_density(raw_path, index - 1, page)
         has_text_before = bool(page and page.has_text)
         has_vector = bool(page and page.has_vector)
+        if has_text_before and len(pdf_info.pages) >= settings.fast_text_detection_page_threshold:
+            density_before = max(settings.text_density_threshold, settings.confidence_density_target)
+        else:
+            density_before = _extract_text_density(raw_path, index - 1, page)
         bypass_reason: str | None = None
         ocr_applied = False
         if bypass_document_type:
@@ -259,6 +281,37 @@ def _confidence_score(text_density_after: float, confidence_density_target: floa
 def _serialize_pages(page_numbers: Iterable[int]) -> str:
     """Convert 1-based page numbers into the OCRmyPDF pages selector."""
     return ",".join(str(page_number) for page_number in page_numbers)
+
+
+def _run_ocr(raw_path: Path, output_path: Path, *, settings: NormalizationSettings, pages: str) -> bool:
+    """Run OCRmyPDF and retry without cleaning when unpaper is unavailable."""
+    try:
+        ocrmypdf.ocr(
+            raw_path,
+            output_path,
+            language=settings.language,
+            deskew=settings.deskew,
+            clean=settings.clean,
+            optimize=settings.optimize,
+            pages=pages,
+        )
+        return True
+    except MissingDependencyError as exc:
+        if settings.clean and "unpaper" in str(exc).lower():
+            try:
+                ocrmypdf.ocr(
+                    raw_path,
+                    output_path,
+                    language=settings.language,
+                    deskew=settings.deskew,
+                    clean=False,
+                    optimize=settings.optimize,
+                    pages=pages,
+                )
+                return True
+            except MissingDependencyError:
+                return False
+        return False
 
 
 # Prefect flow wrapper

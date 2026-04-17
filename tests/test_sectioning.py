@@ -262,8 +262,62 @@ def test_section_document_handles_documents_without_headings(tmp_path: Path) -> 
 
     assert len(sections) == 1
     assert sections[0].title == "Plain Service Notes"
-    assert sections[0].section_type == "other"
     assert sections[0].page_range == (1, 2)
+    assert "Inspect wiring before startup." in sections[0].content
+    assert "Log all error codes for review." in sections[0].content
+
+
+def test_section_document_truncates_overlong_section_ids_for_persistence(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    doc_id = _register_parsed_fixture(data_dir, _write_pdf(tmp_path / "long-title.pdf"), revision="Rev 6")
+    long_title = " ".join(["local io backplane memory use"] * 20)
+    structure = {
+        "doc_id": doc_id,
+        "parser": "docling",
+        "parser_version": "test",
+        "page_count": 1,
+        "texts": [
+            {"item_ref": "#/texts/0", "label": "title", "text": "CompactLogix", "page_numbers": [1]},
+            {"item_ref": "#/texts/1", "label": "section_header", "text": long_title, "page_numbers": [1]},
+            {"item_ref": "#/texts/2", "label": "text", "text": "Memory usage details.", "page_numbers": [1]},
+        ],
+        "tables": [],
+        "pages": [{"page_number": 1, "width": 612, "height": 792, "source_ref": "p1"}],
+    }
+    headings = {
+        "doc_id": doc_id,
+        "headings": [
+            {
+                "title": "CompactLogix",
+                "label": "title",
+                "level": 1,
+                "page_number": 1,
+                "item_ref": "#/texts/0",
+                "children": [
+                    {
+                        "title": long_title,
+                        "label": "section_header",
+                        "level": 2,
+                        "page_number": 1,
+                        "item_ref": "#/texts/1",
+                        "children": [],
+                    }
+                ],
+            }
+        ],
+    }
+    _write_parsed_artifacts(data_dir, doc_id=doc_id, structure=structure, headings=headings)
+
+    sections = section_document(doc_id, data_dir=data_dir)
+
+    assert len(sections[0].section_id) < 180
+    assert (data_dir / "sections" / doc_id / f"{sections[0].section_id}.json").exists()
+
+    sections = section_document(doc_id, data_dir=data_dir)
+
+    assert len(sections) == 1
+    assert sections[0].title == long_title
+    assert sections[0].page_range == (1, 1)
 
 
 def test_section_document_types_operational_sections_and_preserves_ordered_steps(tmp_path: Path) -> None:

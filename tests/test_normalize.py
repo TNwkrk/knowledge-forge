@@ -10,6 +10,7 @@ from pathlib import Path
 
 import ocrmypdf
 from click.testing import CliRunner
+from ocrmypdf.exceptions import MissingDependencyError
 from ocrmypdf.pdfinfo import PdfInfo
 
 from knowledge_forge.cli import cli
@@ -238,6 +239,98 @@ def test_normalize_respects_document_type_bypass_rules(monkeypatch, tmp_path: Pa
     assert result.ocr_applied is False
     assert result.pages_ocrd == 0
     assert result.page_metadata[0].bypass_reason == "document_type_bypass"
+
+
+def test_normalize_retries_without_clean_when_unpaper_is_missing(monkeypatch, tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    source = _build_scanned_pdf(tmp_path / "scanned.pdf")
+    doc_id = _register_fixture(source, data_dir)
+    calls: list[bool] = []
+
+    def fake_ocr(input_path: Path, output_path: Path, *, clean: bool, **_: object) -> None:
+        calls.append(clean)
+        if clean:
+            raise MissingDependencyError("Could not find program 'unpaper' on the PATH")
+        _build_digital_pdf(Path(output_path))
+
+    monkeypatch.setattr(ocrmypdf, "ocr", fake_ocr)
+
+    result = normalize_document(doc_id, data_dir=data_dir)
+
+    assert result.ocr_applied is True
+    assert calls == [True, False]
+
+
+def test_normalize_falls_back_to_raw_copy_when_ocr_dependency_is_still_missing(monkeypatch, tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    source = _build_scanned_pdf(tmp_path / "scanned.pdf")
+    doc_id = _register_fixture(source, data_dir)
+
+    def fake_ocr(*_args: object, **_kwargs: object) -> None:
+        raise MissingDependencyError("Could not find program 'gs' on the PATH")
+
+    monkeypatch.setattr(ocrmypdf, "ocr", fake_ocr)
+
+    result = normalize_document(doc_id, data_dir=data_dir)
+
+    assert result.ocr_applied is False
+    assert result.pages_ocrd == 0
+    assert all(page.bypass_reason == "ocr_dependency_missing" for page in result.page_metadata)
+
+
+def test_normalize_does_not_move_manifest_status_backward(monkeypatch, tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    source = _build_digital_pdf(tmp_path / "digital.pdf")
+    doc_id = _register_fixture(source, data_dir)
+    manifest_path = data_dir / "manifests" / f"{doc_id}.yaml"
+    manifest = load_manifest(data_dir, doc_id).transition_status(DocumentStatus.PARSED, reason="already parsed")
+    manifest_path.write_text(manifest.to_yaml(), encoding="utf-8")
+
+    monkeypatch.setattr(
+        ocrmypdf,
+        "ocr",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("no OCR expected")),
+    )
+
+    normalize_document(doc_id, data_dir=data_dir)
+
+    assert load_manifest(data_dir, doc_id).document.status == DocumentStatus.PARSED
+
+
+def test_normalize_skips_expensive_density_pass_for_large_digital_docs(monkeypatch, tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    source = _build_digital_pdf(tmp_path / "digital.pdf")
+    doc_id = _register_fixture(source, data_dir)
+
+    class _Page:
+        has_text = True
+        has_vector = False
+        width_inches = 8.5
+        height_inches = 11.0
+
+    class _Info:
+        pages = [_Page() for _ in range(30)]
+
+    monkeypatch.setattr("knowledge_forge.normalize.ocr.PdfInfo", lambda _: _Info())
+    calls: list[tuple[str, int]] = []
+
+    def fake_density(pdf_path: Path, page_index: int, _page: object) -> float:
+        calls.append((pdf_path.parent.name, page_index))
+        return 5.0
+
+    monkeypatch.setattr("knowledge_forge.normalize.ocr._extract_text_density", fake_density)
+    monkeypatch.setattr(
+        ocrmypdf,
+        "ocr",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("no OCR expected")),
+    )
+
+    result = normalize_document(doc_id, data_dir=data_dir)
+
+    assert result.ocr_applied is False
+    assert result.page_count == 30
+    assert len(calls) == 30
+    assert all(parent == "normalized" for parent, _ in calls)
 
 
 def test_normalize_cli_supports_doc_id_and_all(monkeypatch, tmp_path: Path) -> None:

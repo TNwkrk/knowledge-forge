@@ -41,6 +41,11 @@ BUCKET_DIMENSIONS: tuple[BucketDimension, ...] = (
         description="Separates authoritative technical, operational, and contextual source families.",
     ),
     BucketDimension(
+        key="curated_bucket",
+        label="Curated bucket",
+        description="Groups a reviewed cross-family pack under one manufacturer-scoped subsystem bucket.",
+    ),
+    BucketDimension(
         key="revision_authority",
         label="Revision authority",
         description="Captures the current revision label used for later precedence analysis.",

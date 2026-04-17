@@ -811,7 +811,8 @@ def _extract_figure_regions(
 
 def _build_section_id(*, doc_id: str, title: str, content: str) -> str:
     digest = hashlib.sha256(f"{doc_id}\n{title.strip()}\n{content.strip()}".encode("utf-8")).hexdigest()[:12]
-    return f"{doc_id}--{slugify(title) or 'section'}--{digest}"
+    title_slug = slugify(title) or "section"
+    return f"{doc_id}--{title_slug[:80]}--{digest}"
 
 
 def _persist_sections(sections: list[Section], data_dir: Path) -> None:

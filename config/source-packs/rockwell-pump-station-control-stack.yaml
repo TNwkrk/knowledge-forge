@@ -1,0 +1,71 @@
+name: Rockwell Pump Station Control Stack
+manufacturer: Rockwell
+bucket: Pump Station Control Stack
+scope: HMI, PLC, network, wiring, and control power
+goal: One clean end-to-end manufacturer bucket that can produce publish-ready knowledge artifacts.
+source_dir: ../../../assets/Rockwell Pump Station Control Stack
+documents:
+  - filename: PanelView Plus 7 Performance Terminals.pdf
+    family: PanelView Plus 7
+    model_applicability: [PanelView Plus 7 Performance]
+    document_type: datasheet
+    revision: 2711P-TD009M-EN-P
+    publication_date: 2024-04-01
+    priority: 1
+  - filename: PanelView Plus 7 Standard Terminals User Manual.pdf
+    family: PanelView Plus 7
+    model_applicability: [PanelView Plus 7 Standard]
+    document_type: operation-manual
+    revision: 2711P-UM007I-EN-P
+    publication_date: 2023-03-01
+    priority: 1
+  - filename: FactoryTalk View Machine Edition User's Guide.pdf
+    family: FactoryTalk View Machine Edition
+    model_applicability: [FactoryTalk View Machine Edition]
+    document_type: operation-manual
+    revision: Version 16.00.00
+    priority: 1
+  - filename: CompactLogix System.pdf
+    family: CompactLogix
+    model_applicability: [1769-L20, 1769-L30]
+    document_type: operation-manual
+    revision: 1769-UM007D-EN-P
+    publication_date: 2002-08-01
+    priority: 1
+  - filename: EtherNet:IP Device Level Ring.pdf
+    family: EtherNet/IP Device Level Ring
+    model_applicability: [EtherNet/IP Device Level Ring]
+    document_type: supplemental-guide
+    revision: ENET-AT007E-EN-P
+    publication_date: 2023-06-01
+    priority: 2
+  - filename: Stratix 2000 Ethernet Unmanaged Switches User Manual.pdf
+    family: Stratix 2000
+    model_applicability: [Stratix 2000]
+    document_type: operation-manual
+    revision: 1783-UM011B-EN-P
+    publication_date: 2017-09-01
+    priority: 2
+  - filename: Industrial Automation Wiring and Grounding Guidelines.pdf
+    family: Industrial Automation Wiring and Grounding
+    model_applicability: [Industrial Automation Wiring and Grounding]
+    document_type: best-practice
+    revision: 1770-4.1
+    publication_date: 1998-02-01
+    priority: 2
+  - filename: Power Supply Reference Manual - 24V, 40 A Single-phase Input.pdf
+    family: 24V Control Power
+    model_applicability: [1606-XLS240E]
+    document_type: technician-reference
+    revision: unknown
+    priority: 2
+    notes: Required by the source-pack brief, but currently missing from the prepared local source directory.
+  - filename: ControlLogix 5570 and 5560 Controllers User Manual, 1756-UM001Q-EN-P.pdf
+    family: ControlLogix
+    model_applicability: [1756-L71, 1756-L72, 1756-L73, 1756-L74, 1756-L75]
+    document_type: operation-manual
+    revision: 1756-UM001Q-EN-P
+    publication_date: 2024-12-01
+    include: conditional
+    priority: 3
+    notes: Include only when the bucket deliberately covers ControlLogix installs instead of the CompactLogix lane.

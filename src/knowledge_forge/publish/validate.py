@@ -188,9 +188,15 @@ def _validate_slug_conventions(relative_path: Path, frontmatter: dict[str, objec
                 f"{relative_path.as_posix()}: manufacturer path slug must match source_documents manufacturer"
             )
         if len(relative_path.parts) >= 3 and relative_path.parts[2] != "_index.md":
-            family_slug = slugify(source_documents[0].get("family", ""))
+            family_value = frontmatter.get("family")
+            if not isinstance(family_value, str) or not family_value.strip():
+                family_value = source_documents[0].get("family", "")
+            family_slug = slugify(family_value)
             if relative_path.parts[2] != family_slug:
-                errors.append(f"{relative_path.as_posix()}: family path slug must match source_documents family")
+                errors.append(
+                    f"{relative_path.as_posix()}: family path slug must match frontmatter family "
+                    f"when provided, otherwise source_documents family"
+                )
         return errors
 
     bucket_id = frontmatter.get("bucket_id")

@@ -191,6 +191,7 @@ class Document(ManifestModel):
     family: str = Field(min_length=1)
     model_applicability: list[str] = Field(min_length=1)
     document_class: str = Field(default="authoritative-technical", min_length=1)
+    curated_bucket: str | None = None
     document_type: str = Field(min_length=1)
     revision: str = Field(min_length=1)
     publication_date: date | None = None
@@ -215,6 +216,15 @@ class Document(ManifestModel):
         if not cleaned:
             raise ValueError("value must not be blank")
         return cleaned
+
+    @field_validator("curated_bucket")
+    @classmethod
+    def validate_curated_bucket(cls, value: str | None) -> str | None:
+        """Normalize optional curated bucket labels."""
+        if value is None:
+            return None
+        cleaned = value.strip()
+        return cleaned or None
 
     @field_validator("document_class")
     @classmethod

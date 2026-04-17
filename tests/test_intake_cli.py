@@ -67,6 +67,91 @@ def test_intake_register_creates_manifest_and_raw_copy(tmp_path: Path) -> None:
     assert manifest.document.status.value == "registered"
 
 
+def test_intake_register_pack_registers_core_entries_and_skips_conditionals(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    source_root = tmp_path / "assets"
+    source_root.mkdir(parents=True)
+    (source_root / "first.pdf").write_bytes(b"%PDF-1.4\n% one\n")
+    (source_root / "second.pdf").write_bytes(b"%PDF-1.4\n% two\n")
+    manifest_path = tmp_path / "pack.yaml"
+    manifest_path.write_text(
+        """
+name: Rockwell Pump Station Control Stack
+manufacturer: Rockwell
+bucket: Pump Station Control Stack
+scope: HMI, PLC, network, wiring, and control power
+goal: First real manufacturer bucket.
+source_dir: ./assets
+documents:
+  - filename: first.pdf
+    family: PanelView Plus 7
+    model_applicability: [PanelView Plus 7]
+    document_type: datasheet
+    revision: rev-a
+  - filename: second.pdf
+    family: CompactLogix
+    model_applicability: [CompactLogix]
+    document_type: operation-manual
+    revision: rev-b
+    include: conditional
+        """.strip(),
+        encoding="utf-8",
+    )
+    runner = CliRunner()
+
+    result = runner.invoke(
+        cli,
+        ["intake", "register-pack", str(manifest_path)],
+        env={"KNOWLEDGE_FORGE_DATA_DIR": str(data_dir)},
+    )
+
+    assert result.exit_code == 0
+    assert "Registered: 1" in result.output
+    assert "Skipped conditionals: second.pdf" in result.output
+
+    manifests = sorted(
+        path.name for path in (data_dir / "manifests").glob("*.yaml") if path.name != "checksum-index.yaml"
+    )
+    assert manifests == ["rockwell-panelview-plus-7-datasheet-rev-a.yaml"]
+    manifest = ManifestEntry.from_yaml((data_dir / "manifests" / manifests[0]).read_text(encoding="utf-8"))
+    assert manifest.document.curated_bucket == "Pump Station Control Stack"
+
+
+def test_intake_register_pack_allows_missing_files_when_requested(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    source_root = tmp_path / "assets"
+    source_root.mkdir(parents=True)
+    manifest_path = tmp_path / "pack.yaml"
+    manifest_path.write_text(
+        """
+name: Rockwell Pump Station Control Stack
+manufacturer: Rockwell
+bucket: Pump Station Control Stack
+scope: HMI, PLC, network, wiring, and control power
+goal: First real manufacturer bucket.
+source_dir: ./assets
+documents:
+  - filename: missing.pdf
+    family: CompactLogix
+    model_applicability: [CompactLogix]
+    document_type: operation-manual
+    revision: rev-a
+        """.strip(),
+        encoding="utf-8",
+    )
+    runner = CliRunner()
+
+    result = runner.invoke(
+        cli,
+        ["intake", "register-pack", str(manifest_path), "--allow-missing"],
+        env={"KNOWLEDGE_FORGE_DATA_DIR": str(data_dir)},
+    )
+
+    assert result.exit_code == 0
+    assert "Missing files:" in result.output
+    assert "missing.pdf" in result.output
+
+
 def test_intake_list_and_inspect_show_registered_manifest(tmp_path: Path) -> None:
     data_dir = tmp_path / "data"
     source = _create_pdf(tmp_path / "manual.pdf")

@@ -17,7 +17,7 @@ from knowledge_forge.intake.importer import get_data_dir, list_manifests
 from knowledge_forge.intake.manifest import ManifestEntry, slugify
 
 COMPILATION_VERSION = "overview-pages-v1"
-FAMILY_DIMENSIONS = frozenset({"product_family", "family"})
+FAMILY_DIMENSIONS = frozenset({"product_family", "family", "curated_bucket"})
 
 
 @dataclass(frozen=True)
@@ -26,7 +26,7 @@ class FamilyOverviewInput:
 
     bucket_id: str
     manufacturer: str
-    family: str
+    bucket_label: str
     manifests: list[ManifestEntry]
     topics: list[str]
 
@@ -37,7 +37,7 @@ def compile_family_overview(bucket_id: str, *, data_dir: Path | None = None) -> 
     family_input = _load_family_overview_input(bucket_id, data_dir=resolved_data_dir)
     generated_at = utc_timestamp()
     manufacturer_slug = slugify(family_input.manufacturer)
-    family_slug = slugify(family_input.family)
+    family_slug = slugify(family_input.bucket_label)
     output_path = (
         resolved_data_dir
         / "compiled"
@@ -50,7 +50,7 @@ def compile_family_overview(bucket_id: str, *, data_dir: Path | None = None) -> 
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
     frontmatter = {
-        "title": f"{family_input.manufacturer} {family_input.family} Family Overview",
+        "title": f"{family_input.manufacturer} {family_input.bucket_label} Family Overview",
         "generated_by": GENERATED_BY,
         "publish_run": PUBLISH_RUN_PLACEHOLDER,
         "source_documents": _build_source_documents(family_input.manifests),
@@ -59,7 +59,7 @@ def compile_family_overview(bucket_id: str, *, data_dir: Path | None = None) -> 
         "compilation_version": COMPILATION_VERSION,
         "bucket_id": family_input.bucket_id,
         "manufacturer": family_input.manufacturer,
-        "family": family_input.family,
+        "family": family_input.bucket_label,
         "page_type": "family_overview",
     }
     record_counts = {
@@ -152,14 +152,14 @@ def _render_family_overview(family_input: FamilyOverviewInput) -> str:
     models = sorted({model for manifest in family_input.manifests for model in manifest.document.model_applicability})
 
     lines = [
-        f"# {family_input.manufacturer} {family_input.family}",
+        f"# {family_input.manufacturer} {family_input.bucket_label}",
         "",
         "## Family Summary",
         "",
         f"- Bucket: `{family_input.bucket_id}`",
         (
             f"- Family description: Review index for {family_input.manufacturer} "
-            f"{family_input.family} knowledge artifacts."
+            f"{family_input.bucket_label} knowledge artifacts."
         ),
         f"- Document count: {len(family_input.manifests)}",
         f"- Models covered: {', '.join(models) if models else 'unknown'}",
@@ -214,11 +214,11 @@ def _render_manufacturer_index(manufacturer: str, family_inputs: list[FamilyOver
         "## Product Families",
         "",
     ]
-    for family_input in sorted(family_inputs, key=lambda entry: entry.family.casefold()):
-        family_slug = slugify(family_input.family)
+    for family_input in sorted(family_inputs, key=lambda entry: entry.bucket_label.casefold()):
+        family_slug = slugify(family_input.bucket_label)
         topic_summary = ", ".join(TOPIC_TITLES[topic] for topic in family_input.topics)
         lines.append(
-            f"- [{family_input.family}]({family_slug}/_index.md) — "
+            f"- [{family_input.bucket_label}]({family_slug}/_index.md) — "
             f"{len(family_input.manifests)} documents; "
             f"topics: {topic_summary or 'none'}"
         )
@@ -257,13 +257,23 @@ def _load_family_overview_input(bucket_id: str, *, data_dir: Path) -> FamilyOver
 
     manifests = sorted(manifests, key=lambda manifest: manifest.doc_id)
     first_document = manifests[0].document
+    matching_assignments = [
+        assignment
+        for assignment in manifests[0].bucket_assignments
+        if assignment.bucket_id == bucket_id and assignment.dimension in FAMILY_DIMENSIONS
+    ]
+    if not matching_assignments:
+        raise ValueError(
+            f"no matching bucket assignment found for bucket_id '{bucket_id}' in manifest '{manifests[0].doc_id}'"
+        )
+    matching_assignment = matching_assignments[0]
     topics = sorted(
         {topic for topic in _discover_topics_for_bucket(bucket_id, data_dir=data_dir) if topic in TOPIC_TITLES}
     )
     return FamilyOverviewInput(
         bucket_id=bucket_id,
         manufacturer=first_document.manufacturer,
-        family=first_document.family,
+        bucket_label=matching_assignment.value,
         manifests=manifests,
         topics=topics,
     )

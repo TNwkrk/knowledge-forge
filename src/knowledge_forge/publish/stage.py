@@ -4,12 +4,13 @@ from __future__ import annotations
 
 import json
 from collections.abc import Iterable
+from datetime import date, datetime
 from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict, Field
-from yaml import safe_dump
+from yaml import safe_dump, safe_load
 
-from knowledge_forge.compile.source_pages import CompiledPage
+from knowledge_forge.compile.source_pages import CompiledPage, CompileMetadata
 from knowledge_forge.intake.importer import get_data_dir
 from knowledge_forge.intake.manifest import slugify
 from knowledge_forge.publish.manifest import PublishManifest, generate_publish_manifest
@@ -127,6 +128,40 @@ def stage_publish(
     )
 
 
+def load_compiled_pages(
+    compiled_root: str | Path = "compiled",
+    *,
+    data_dir: Path | None = None,
+) -> list[CompiledPage]:
+    """Load compiled Markdown pages from disk for publish staging."""
+    resolved_data_dir = get_data_dir(data_dir)
+    resolved_root = Path(compiled_root)
+    if not resolved_root.is_absolute():
+        resolved_root = (resolved_data_dir / resolved_root).resolve()
+    if not resolved_root.exists():
+        raise FileNotFoundError(f"compiled root not found: {resolved_root}")
+
+    pages: list[CompiledPage] = []
+    for markdown_path in sorted(resolved_root.rglob("*.md")):
+        frontmatter, content = _split_frontmatter(markdown_path)
+        pages.append(
+            CompiledPage(
+                output_path=markdown_path,
+                doc_id=str(frontmatter.get("doc_id") or frontmatter.get("bucket_id") or markdown_path.stem),
+                frontmatter=frontmatter,
+                content=content,
+                compile_metadata=CompileMetadata(
+                    generated_at=str(frontmatter.get("generated_at", "unknown")),
+                    extraction_versions=_split_versions(frontmatter.get("extraction_version")),
+                    parser_versions=[],
+                    record_counts={},
+                    review_flag_count=0,
+                ),
+            )
+        )
+    return pages
+
+
 def _publish_relative_path(page: CompiledPage) -> Path:
     output_parts = page.output_path.parts
     try:
@@ -169,6 +204,18 @@ def _render_markdown(frontmatter: dict[str, object], content: str) -> str:
     return f"---\n{yaml_frontmatter}\n---\n\n{content.rstrip()}\n"
 
 
+def _split_frontmatter(path: Path) -> tuple[dict[str, object], str]:
+    text = path.read_text(encoding="utf-8")
+    if not text.startswith("---\n"):
+        raise ValueError(f"compiled page missing YAML frontmatter: {path}")
+    _, remainder = text.split("---\n", 1)
+    frontmatter_block, content = remainder.split("\n---\n", 1)
+    payload = safe_load(frontmatter_block) or {}
+    if not isinstance(payload, dict):
+        raise ValueError(f"compiled page frontmatter is not a mapping: {path}")
+    return _normalize_frontmatter(payload), content.lstrip("\n")
+
+
 def _source_documents(frontmatter: dict[str, object]) -> list[dict[str, str]]:
     payload = frontmatter.get("source_documents")
     if not isinstance(payload, list):
@@ -187,3 +234,21 @@ def _source_documents(frontmatter: dict[str, object]) -> list[dict[str, str]]:
 def _join_versions(values: Iterable[str]) -> str:
     ordered = sorted({value for value in values if value})
     return ", ".join(ordered) if ordered else "unknown"
+
+
+def _split_versions(value: object) -> list[str]:
+    if not isinstance(value, str):
+        return []
+    return [part.strip() for part in value.split(",") if part.strip()]
+
+
+def _normalize_frontmatter(value: object) -> object:
+    if isinstance(value, dict):
+        return {str(key): _normalize_frontmatter(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_normalize_frontmatter(item) for item in value]
+    if isinstance(value, datetime):
+        return value.replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    if isinstance(value, date):
+        return value.isoformat()
+    return value

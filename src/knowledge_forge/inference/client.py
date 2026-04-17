@@ -14,6 +14,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from knowledge_forge.inference.config import InferenceConfig
 from knowledge_forge.inference.cost import estimate_cost
 from knowledge_forge.inference.logger import InferenceLogEntry, InferenceLogger, utc_now
+from knowledge_forge.inference.openai_schema import prepare_openai_json_schema
 from knowledge_forge.inference.retry import RetryPolicy, retry_transient
 from knowledge_forge.inference.schema_validator import validate_response
 from knowledge_forge.intake.importer import get_data_dir
@@ -76,12 +77,14 @@ class InferenceClient:
             "temperature": self.config.temperature,
             "max_output_tokens": self.config.max_tokens,
         }
+        request_schema: dict[str, Any] | None = None
         if schema is not None:
+            request_schema = prepare_openai_json_schema(schema)
             request_args["text"] = {
                 "format": {
                     "type": "json_schema",
                     "name": "knowledge_forge_schema",
-                    "schema": schema,
+                    "schema": request_schema,
                     "strict": True,
                 }
             }
@@ -118,7 +121,7 @@ class InferenceClient:
                     if response_length > MAX_JSON_ERROR_SNIPPET_LENGTH:
                         snippet += "..."
                     raise ValueError(f"response was not valid JSON: {exc.msg}. Output snippet: {snippet!r}") from exc
-                validation = validate_response(parsed_json, schema)
+                validation = validate_response(parsed_json, request_schema)
                 if not validation.valid:
                     snippet = response_text[:MAX_JSON_ERROR_SNIPPET_LENGTH]
                     if len(response_text) > MAX_JSON_ERROR_SNIPPET_LENGTH:
