@@ -765,8 +765,7 @@ def test_section_document_classifies_rockwell_style_admonitions_steps_and_short_
                 "item_ref": "#/texts/2",
                 "label": "text",
                 "text": (
-                    "Only install a 1747-BA battery. If you install a different battery, "
-                    "you may damage the controller."
+                    "Only install a 1747-BA battery. If you install a different battery, you may damage the controller."
                 ),
                 "page_numbers": [1],
             },
