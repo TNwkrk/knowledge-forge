@@ -59,13 +59,12 @@ documents:
     document_type: technician-reference
     revision: unknown
     priority: 2
-    notes: Required by the source-pack brief, but currently missing from the prepared local source directory.
   - filename: ControlLogix 5570 and 5560 Controllers User Manual, 1756-UM001Q-EN-P.pdf
     family: ControlLogix
     model_applicability: [1756-L71, 1756-L72, 1756-L73, 1756-L74, 1756-L75]
     document_type: operation-manual
     revision: 1756-UM001Q-EN-P
     publication_date: 2024-12-01
-    include: conditional
+    include: core
     priority: 3
-    notes: Include only when the bucket deliberately covers ControlLogix installs instead of the CompactLogix lane.
+    notes: Included because this bucket explicitly covers ControlLogix installs alongside the CompactLogix lane.
