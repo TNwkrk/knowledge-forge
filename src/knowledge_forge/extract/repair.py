@@ -37,6 +37,7 @@ def repair_extraction(
     prompt_template: str | None = None,
     source_doc_id: str | None = None,
     source_section_id: str | None = None,
+    pipeline_run_id: str | None = None,
     max_attempts: int = 2,
 ) -> RepairResult:
     """Attempt a bounded repair loop before flagging manual review."""
@@ -63,6 +64,7 @@ def repair_extraction(
                 prompt_template=_repair_prompt_template(prompt_template, "reprompt"),
                 source_doc_id=source_doc_id,
                 source_section_id=source_section_id,
+                pipeline_run_id=pipeline_run_id,
             )
             return RepairResult(
                 valid=True,
@@ -89,6 +91,7 @@ def repair_extraction(
                 prompt_template=_repair_prompt_template(prompt_template, "relaxed"),
                 source_doc_id=source_doc_id,
                 source_section_id=source_section_id,
+                pipeline_run_id=pipeline_run_id,
             )
             validation = validate_response(result.parsed_json, schema)
             if validation.valid:

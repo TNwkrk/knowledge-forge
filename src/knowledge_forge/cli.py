@@ -32,8 +32,12 @@ from knowledge_forge.evaluation import (
 from knowledge_forge.extract import (
     analyze_contradictions,
     audit_document_provenance,
-    extract_document,
     find_supersession_assessments,
+    load_extraction_run,
+    resume_extraction_run,
+    retry_failed_extraction_run,
+    start_extraction_run,
+    summarize_run_status,
 )
 from knowledge_forge.inference import InferenceClient, InferenceConfig, aggregate_costs, ingest_results, poll_batch
 from knowledge_forge.intake.importer import (
@@ -510,7 +514,11 @@ def section(doc_id: str | None, section_all: bool) -> None:
     help="Inference configuration file.",
 )
 def extract(
-    args: tuple[str, ...], section_id: str | None, min_confidence: float, max_repair_attempts: int, config_path: Path
+    args: tuple[str, ...],
+    section_id: str | None,
+    min_confidence: float,
+    max_repair_attempts: int,
+    config_path: Path,
 ) -> None:
     """Extract structured records from canonical sections."""
     if args[:1] == ("provenance",):
@@ -518,7 +526,7 @@ def extract(
             raise click.ClickException("pass a doc_id to extract provenance")
         if section_id is not None:
             raise click.ClickException("extract provenance does not support --section")
-        _extract_provenance(args[1])
+        extract_provenance(args[1])
         return
 
     if len(args) != 1:
@@ -527,26 +535,30 @@ def extract(
 
     try:
         config = InferenceConfig.load(config_path)
-        records = extract_document(
-            doc_id,
-            section_id=section_id,
+        execution = start_extraction_run(
+            [doc_id],
             config=config,
             data_dir=get_data_dir(),
+            section_ids=[section_id] if section_id is not None else None,
             min_confidence=min_confidence,
             max_repair_attempts=max_repair_attempts,
         )
     except (FileNotFoundError, KeyError, ValueError) as exc:
         raise click.ClickException(str(exc)) from exc
 
-    click.echo(f"Extracted {len(records)} record(s) for {doc_id}")
+    click.echo(f"Run: {execution.run.run_id}")
+    click.echo(f"Extracted {execution.records_emitted} record(s) for {doc_id}")
     if section_id is not None:
         click.echo(f"Section: {section_id}")
     if min_confidence > 0:
         click.echo(f"Review threshold: {min_confidence:.2f}")
+    click.echo(f"Run status: {execution.run.status.value}")
+    click.echo(f"Run artifact: {execution.run_path}")
     click.echo(f"Output dir: {get_data_dir() / 'extracted' / doc_id}")
 
 
-def _extract_provenance(doc_id: str) -> None:
+def extract_provenance(doc_id: str) -> None:
+    """Audit persisted extraction provenance for one document."""
     try:
         report = audit_document_provenance(doc_id, data_dir=get_data_dir())
     except FileNotFoundError as exc:
@@ -562,6 +574,142 @@ def _extract_provenance(doc_id: str) -> None:
             if row.valid:
                 continue
             click.echo(f"{row.record_type}\t{row.record_id}\t{'; '.join(row.errors)}")
+
+
+@click.group(name="extract-run", help="Operate the durable extraction-run queue.")
+def extract_run() -> None:
+    """Durable extraction-run command group."""
+
+
+@extract_run.command("start")
+@click.argument("doc_ids", nargs=-1, type=str)
+@click.option("--section", "section_ids", multiple=True, help="Target one or more sections on a single document.")
+@click.option(
+    "--min-confidence",
+    type=click.FloatRange(min=0.0, max=1.0),
+    default=0.0,
+    show_default=True,
+    help="Flag records below this confidence threshold for review.",
+)
+@click.option(
+    "--max-repair-attempts",
+    type=click.IntRange(min=0),
+    default=2,
+    show_default=True,
+    help="Maximum repair attempts for invalid extraction responses.",
+)
+@click.option(
+    "--config",
+    "config_path",
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    default=Path("config/inference.yaml"),
+    show_default=True,
+    help="Inference configuration file.",
+)
+def extract_run_start(
+    doc_ids: tuple[str, ...],
+    section_ids: tuple[str, ...],
+    min_confidence: float,
+    max_repair_attempts: int,
+    config_path: Path,
+) -> None:
+    """Create and execute a durable extraction run."""
+    if not doc_ids:
+        raise click.ClickException("pass at least one doc_id")
+
+    try:
+        config = InferenceConfig.load(config_path)
+        execution = start_extraction_run(
+            list(doc_ids),
+            config=config,
+            data_dir=get_data_dir(),
+            section_ids=list(section_ids) or None,
+            min_confidence=min_confidence,
+            max_repair_attempts=max_repair_attempts,
+        )
+    except (FileNotFoundError, KeyError, ValueError) as exc:
+        raise click.ClickException(str(exc)) from exc
+
+    _echo_run_summary(execution.run)
+    click.echo(f"Executed items: {len(execution.executed_item_ids)}")
+    click.echo(f"Records emitted: {execution.records_emitted}")
+    click.echo(f"Run artifact: {execution.run_path}")
+
+
+@extract_run.command("status")
+@click.argument("run_id", type=str)
+def extract_run_status(run_id: str) -> None:
+    """Inspect status and progress for one durable extraction run."""
+    try:
+        run = load_extraction_run(run_id, data_dir=get_data_dir())
+    except FileNotFoundError as exc:
+        raise click.ClickException(str(exc)) from exc
+
+    _echo_run_summary(run)
+
+
+@extract_run.command("resume")
+@click.argument("run_id", type=str)
+@click.option(
+    "--config",
+    "config_path",
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    default=Path("config/inference.yaml"),
+    show_default=True,
+    help="Inference configuration file.",
+)
+def extract_run_resume(run_id: str, config_path: Path) -> None:
+    """Resume a durable extraction run after interruption."""
+    try:
+        config = InferenceConfig.load(config_path)
+        execution = resume_extraction_run(run_id, config=config, data_dir=get_data_dir())
+    except (FileNotFoundError, KeyError, ValueError) as exc:
+        raise click.ClickException(str(exc)) from exc
+
+    _echo_run_summary(execution.run)
+    click.echo(f"Executed items: {len(execution.executed_item_ids)}")
+    click.echo(f"Records emitted: {execution.records_emitted}")
+    click.echo(f"Run artifact: {execution.run_path}")
+
+
+@extract_run.command("retry-failed")
+@click.argument("run_id", type=str)
+@click.option(
+    "--config",
+    "config_path",
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    default=Path("config/inference.yaml"),
+    show_default=True,
+    help="Inference configuration file.",
+)
+def extract_run_retry_failed(run_id: str, config_path: Path) -> None:
+    """Retry only failed items while preserving prior successful work."""
+    try:
+        config = InferenceConfig.load(config_path)
+        execution = retry_failed_extraction_run(run_id, config=config, data_dir=get_data_dir())
+    except (FileNotFoundError, KeyError, ValueError) as exc:
+        raise click.ClickException(str(exc)) from exc
+
+    _echo_run_summary(execution.run)
+    click.echo(f"Executed items: {len(execution.executed_item_ids)}")
+    click.echo(f"Records emitted: {execution.records_emitted}")
+    click.echo(f"Run artifact: {execution.run_path}")
+
+
+def _echo_run_summary(run: object) -> None:
+    counts = summarize_run_status(run)
+    click.echo(f"Run: {run.run_id}")
+    click.echo(f"Status: {run.status.value}")
+    click.echo(f"Documents: {', '.join(document.doc_id for document in run.documents)}")
+    click.echo(f"Items: {run.item_count}")
+    click.echo(f"Pending: {counts['pending']}")
+    click.echo(f"In progress: {counts['in_progress']}")
+    click.echo(f"Succeeded: {counts['succeeded']}")
+    click.echo(f"Failed: {counts['failed']}")
+    click.echo(f"Skipped: {counts['skipped']}")
+
+
+cli.add_command(extract_run)
 
 
 @compile.command("source-pages")

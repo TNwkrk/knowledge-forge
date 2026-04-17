@@ -30,6 +30,21 @@ from knowledge_forge.extract.provenance import (
     validate_record_provenance,
 )
 from knowledge_forge.extract.repair import RepairResult, repair_extraction
+from knowledge_forge.extract.runs import (
+    ExtractionRun,
+    ExtractionRunDocumentScope,
+    ExtractionRunExecution,
+    ExtractionRunItem,
+    ExtractionRunItemStatus,
+    ExtractionRunStatus,
+    create_extraction_run,
+    execute_extraction_run,
+    load_extraction_run,
+    resume_extraction_run,
+    retry_failed_extraction_run,
+    start_extraction_run,
+    summarize_run_status,
+)
 from knowledge_forge.extract.schemas import (
     JSON_SCHEMA_REGISTRY,
     SCHEMA_REGISTRY,
@@ -97,4 +112,17 @@ __all__ = [
     "ProvenanceAuditRow",
     "validate_record_provenance",
     "Warning",
+    "ExtractionRun",
+    "ExtractionRunDocumentScope",
+    "ExtractionRunExecution",
+    "ExtractionRunItem",
+    "ExtractionRunItemStatus",
+    "ExtractionRunStatus",
+    "create_extraction_run",
+    "execute_extraction_run",
+    "load_extraction_run",
+    "resume_extraction_run",
+    "retry_failed_extraction_run",
+    "start_extraction_run",
+    "summarize_run_status",
 ]

@@ -396,28 +396,43 @@ def test_extract_cli_supports_document_and_single_section(monkeypatch, tmp_path:
 
     monkeypatch.setattr("knowledge_forge.cli.InferenceConfig.load", lambda _: config_sentinel)
 
-    def fake_extract_document(
-        doc_id: str,
+    def fake_start_extraction_run(
+        doc_ids: list[str],
         *,
-        section_id: str | None = None,
         config: object | None = None,
         data_dir: Path | None = None,
+        section_ids: list[str] | None = None,
         min_confidence: float = 0.0,
         max_repair_attempts: int = 2,
     ):
         calls.append(
             {
-                "doc_id": doc_id,
-                "section_id": section_id,
+                "doc_ids": doc_ids,
+                "section_ids": section_ids,
                 "config": config,
                 "data_dir": data_dir,
                 "min_confidence": min_confidence,
                 "max_repair_attempts": max_repair_attempts,
             }
         )
-        return [object(), object()]
+        return type(
+            "Execution",
+            (),
+            {
+                "run": type(
+                    "Run",
+                    (),
+                    {
+                        "run_id": "er-20260417-001",
+                        "status": type("Status", (), {"value": "completed"})(),
+                    },
+                )(),
+                "run_path": data_dir / "extraction_runs" / "er-20260417-001.json",
+                "records_emitted": 2,
+            },
+        )()
 
-    monkeypatch.setattr("knowledge_forge.cli.extract_document", fake_extract_document)
+    monkeypatch.setattr("knowledge_forge.cli.start_extraction_run", fake_start_extraction_run)
     env = {"KNOWLEDGE_FORGE_DATA_DIR": str(data_dir)}
 
     single = runner.invoke(
@@ -427,6 +442,7 @@ def test_extract_cli_supports_document_and_single_section(monkeypatch, tmp_path:
     )
     assert single.exit_code == 0
     assert "Extracted 2 record(s) for doc-001" in single.output
+    assert "Run: er-20260417-001" in single.output
 
     one_section = runner.invoke(
         cli,
@@ -437,16 +453,16 @@ def test_extract_cli_supports_document_and_single_section(monkeypatch, tmp_path:
     assert "Section: doc-001--startup--001" in one_section.output
     assert calls == [
         {
-            "doc_id": "doc-001",
-            "section_id": None,
+            "doc_ids": ["doc-001"],
+            "section_ids": None,
             "config": config_sentinel,
             "data_dir": data_dir,
             "min_confidence": 0.8,
             "max_repair_attempts": 1,
         },
         {
-            "doc_id": "doc-001",
-            "section_id": "doc-001--startup--001",
+            "doc_ids": ["doc-001"],
+            "section_ids": ["doc-001--startup--001"],
             "config": config_sentinel,
             "data_dir": data_dir,
             "min_confidence": 0.0,
@@ -511,6 +527,79 @@ def test_extract_section_flags_low_confidence_records_for_review(tmp_path: Path)
     assert review_path.exists()
     payload = json.loads(review_path.read_text(encoding="utf-8"))
     assert payload["reasons"] == ["below_min_confidence"]
+
+
+def test_extract_section_replaces_stale_record_files_and_review_flags(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    doc_id = _register_parsed_fixture(_write_pdf(tmp_path / "manual.pdf"), data_dir)
+    _write_parse_meta(data_dir, doc_id)
+    _write_bucket_assignments(data_dir, doc_id)
+    section = Section(
+        doc_id=doc_id,
+        section_id=f"{doc_id}--specifications--001",
+        section_type="specifications",
+        title="Electrical Specifications",
+        content="Supply voltage: 24 VDC\nCurrent draw: 3 A",
+        page_range=(42, 42),
+        heading_path=["Electrical Specifications"],
+    )
+    first_client = _FakeClient(
+        {
+            "spec_value": [
+                {
+                    **_base_record(),
+                    "source_doc_id": doc_id,
+                    "source_heading": "Electrical Specifications",
+                    "parameter": "Supply voltage",
+                    "value": "24",
+                    "unit": "VDC",
+                    "conditions": None,
+                    "applicability": None,
+                },
+                {
+                    **_base_record(),
+                    "source_doc_id": doc_id,
+                    "source_heading": "Electrical Specifications",
+                    "parameter": "Current draw",
+                    "value": "3",
+                    "unit": "A",
+                    "conditions": None,
+                    "applicability": None,
+                },
+            ]
+        },
+        output_tokens=4096,
+    )
+
+    extract_section(section, client=first_client, data_dir=data_dir, min_confidence=0.8)
+
+    second_client = _FakeClient(
+        {
+            "spec_value": [
+                {
+                    **_base_record(),
+                    "source_doc_id": doc_id,
+                    "source_heading": "Electrical Specifications",
+                    "parameter": "Supply voltage",
+                    "value": "24",
+                    "unit": "VDC",
+                    "conditions": "Nominal input",
+                    "applicability": None,
+                }
+            ]
+        },
+        output_tokens=32,
+    )
+
+    records = extract_section(section, client=second_client, data_dir=data_dir, min_confidence=0.8)
+
+    assert len(records) == 1
+    kept_path = data_dir / "extracted" / doc_id / "spec_value" / f"{section.section_id}--spec_value--001.json"
+    stale_path = data_dir / "extracted" / doc_id / "spec_value" / f"{section.section_id}--spec_value--002.json"
+    review_path = data_dir / "extracted" / doc_id / "reviews" / f"{section.section_id}--spec_value.json"
+    assert kept_path.exists()
+    assert not stale_path.exists()
+    assert not review_path.exists()
 
 
 def test_extract_section_flags_unrepairable_response_for_review(tmp_path: Path) -> None:

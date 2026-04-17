@@ -192,6 +192,8 @@ knowledge-forge/
     ├── sections/                    # canonical sections
     │   └── {doc_id}/
     │       └── {section_id}.json
+    ├── extraction_runs/             # durable extraction-run checkpoints
+    │   └── {run_id}.json
     ├── extracted/                   # extraction records
     │   └── {doc_id}/
     │       ├── {record_type}/
@@ -252,6 +254,7 @@ needs them and the expected output shape is stable enough to review.
 - **curated_bucket**: Optional manifest hint for a manufacturer-scoped cross-family bucket such as `Pump Station Control Stack`. This does not replace the real `family` value; it adds an extra bucket dimension when a reviewed source pack intentionally spans several product families.
 - **section_id**: `{doc_id}--{slug(title)}--{digest}`. Example: `honeywell-dc1000-service-manual-rev3--maintenance-procedures--a1b2c3d4`. The title-derived slug may be truncated during generation.
 - **record_id**: `{section_id}--{record_type}--{sequence}`. Example: `honeywell-dc1000-service-manual-rev3--maintenance-procedures--a1b2c3d4--procedure--001`
+- **run_id**: `er-{YYYYMMDD}-{sequence}`. Example: `er-20260417-001`
 - **publish_run_id**: `kf-{YYYYMMDD}-{sequence}`. Example: `kf-20240115-001`
 
 ### Artifact lifecycle
@@ -261,11 +264,22 @@ raw/{filename}.pdf
   → normalized/{doc_id}.pdf
     → parsed/{doc_id}/content.md + structure.json + ... + quality.json
       → sections/{doc_id}/{section_id}.json
-        → extracted/{doc_id}/{record_type}/{record_id}.json
-          → compiled/{page_type}/{slug}.md
-            → publish/{publish_run_id}/{path}.md
-              → PR into FlowCommander
+        → extraction_runs/{run_id}.json
+          → extracted/{doc_id}/{record_type}/{record_id}.json
+            → compiled/{page_type}/{slug}.md
+              → publish/{publish_run_id}/{path}.md
+                → PR into FlowCommander
 ```
+
+Each `extraction_runs/{run_id}.json` artifact stores the durable queue for one
+extraction attempt across one or more documents. Items are keyed at the
+`section_id + record_type` unit of work and persist the current checkpoint state
+plus the input fingerprint required for safe reuse: `doc_id`, `section_id`,
+section content hash, prompt/version, schema/version, and model. Full-document
+manifests advance to `extracted` only after every required item for that
+document is complete in the run. Replacing one work item's outputs now swaps in
+the new generation and removes stale record files plus stale review flags from
+the superseded generation.
 
 ### Canonical parse artifact contract
 
