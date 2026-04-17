@@ -1,0 +1,17 @@
+{
+  "fixture_id": "scanned-ocr",
+  "title": "Scanned OCR challenge fixture",
+  "document_type": "Service Manual",
+  "document_class": "authoritative-technical",
+  "expected_headings": [
+    "Field Notes",
+    "Troubleshooting"
+  ],
+  "expected_tables": [],
+  "required_text": [
+    "Check alarm relay wiring.",
+    "Replace the fuse if open."
+  ],
+  "expected_section_count": 1,
+  "expected_section_types": ["troubleshooting"]
+}

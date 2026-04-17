@@ -1,0 +1,13 @@
+{
+  "doc_id": "manual-structured",
+  "tables": [
+    {
+      "item_ref": "#/tables/0",
+      "label": "table",
+      "page_numbers": [2],
+      "row_count": 2,
+      "column_count": 2,
+      "data": [["Parameter", "Value"], ["Voltage", "120V"]]
+    }
+  ]
+}

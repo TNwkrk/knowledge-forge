@@ -1,0 +1,26 @@
+{
+  "doc_id": "manual-structured",
+  "parser": "docling",
+  "parser_version": "test-docling-1.0",
+  "page_count": 2,
+  "texts": [
+    {"item_ref": "#/texts/0", "label": "title", "text": "ACME Service Manual", "page_numbers": [1]},
+    {"item_ref": "#/texts/1", "label": "section_header", "text": "Safety", "page_numbers": [1]},
+    {"item_ref": "#/texts/2", "label": "text", "text": "Wear gloves before opening the panel.", "page_numbers": [1]},
+    {"item_ref": "#/texts/3", "label": "section_header", "text": "Specifications", "page_numbers": [2]}
+  ],
+  "tables": [
+    {
+      "item_ref": "#/tables/0",
+      "label": "table",
+      "page_numbers": [2],
+      "row_count": 2,
+      "column_count": 2,
+      "data": [["Parameter", "Value"], ["Voltage", "120V"]]
+    }
+  ],
+  "pages": [
+    {"page_number": 1, "width": 612, "height": 792, "source_ref": "p1"},
+    {"page_number": 2, "width": 612, "height": 792, "source_ref": "p2"}
+  ]
+}

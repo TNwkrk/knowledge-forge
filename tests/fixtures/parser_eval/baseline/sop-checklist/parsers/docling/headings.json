@@ -1,0 +1,22 @@
+{
+  "doc_id": "sop-checklist",
+  "headings": [
+    {
+      "title": "Cooling Tower SOP",
+      "label": "title",
+      "level": 1,
+      "page_number": 1,
+      "item_ref": "#/texts/0",
+      "children": [
+        {
+          "title": "Procedure",
+          "label": "section_header",
+          "level": 2,
+          "page_number": 1,
+          "item_ref": "#/texts/1",
+          "children": []
+        }
+      ]
+    }
+  ]
+}

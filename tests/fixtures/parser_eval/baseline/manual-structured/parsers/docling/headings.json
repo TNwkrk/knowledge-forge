@@ -1,0 +1,30 @@
+{
+  "doc_id": "manual-structured",
+  "headings": [
+    {
+      "title": "ACME Service Manual",
+      "label": "title",
+      "level": 1,
+      "page_number": 1,
+      "item_ref": "#/texts/0",
+      "children": [
+        {
+          "title": "Safety",
+          "label": "section_header",
+          "level": 2,
+          "page_number": 1,
+          "item_ref": "#/texts/1",
+          "children": []
+        },
+        {
+          "title": "Specifications",
+          "label": "section_header",
+          "level": 2,
+          "page_number": 2,
+          "item_ref": "#/texts/3",
+          "children": []
+        }
+      ]
+    }
+  ]
+}

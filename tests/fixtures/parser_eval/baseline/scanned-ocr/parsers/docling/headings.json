@@ -1,0 +1,22 @@
+{
+  "doc_id": "scanned-ocr",
+  "headings": [
+    {
+      "title": "Field Notes",
+      "label": "title",
+      "level": 1,
+      "page_number": 1,
+      "item_ref": "#/texts/0",
+      "children": [
+        {
+          "title": "Troubleshooting",
+          "label": "section_header",
+          "level": 2,
+          "page_number": 1,
+          "item_ref": "#/texts/1",
+          "children": []
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,24 @@
+{
+  "fixture_id": "manual-structured",
+  "title": "Structured OEM manual fixture",
+  "document_type": "Service Manual",
+  "document_class": "authoritative-technical",
+  "expected_headings": [
+    "ACME Service Manual",
+    "Safety",
+    "Specifications"
+  ],
+  "expected_tables": [
+    {
+      "rows": 2,
+      "columns": 2,
+      "required_cells": ["Voltage", "120V"]
+    }
+  ],
+  "required_text": [
+    "Wear gloves before opening the panel.",
+    "Voltage 120V"
+  ],
+  "expected_section_count": 2,
+  "expected_section_types": ["safety", "specifications"]
+}

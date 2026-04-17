@@ -1,0 +1,17 @@
+{
+  "fixture_id": "sop-checklist",
+  "title": "Operational SOP fixture",
+  "document_type": "SOP",
+  "document_class": "operational",
+  "expected_headings": [
+    "Cooling Tower SOP",
+    "Procedure"
+  ],
+  "expected_tables": [],
+  "required_text": [
+    "1. Verify the basin level.",
+    "2. Start the recirculation pump."
+  ],
+  "expected_section_count": 1,
+  "expected_section_types": ["workflow"]
+}

@@ -236,6 +236,31 @@ def section_all_documents(*, data_dir: Path | None = None) -> list[list[Section]
     return results
 
 
+def build_sections_from_artifacts(
+    *,
+    doc_id: str,
+    structure: StructuredParseArtifact,
+    heading_tree: HeadingTreeArtifact,
+    document_type: str = "",
+    document_class: str = "",
+) -> list[Section]:
+    """Build typed sections from pre-loaded parse artifacts without filesystem I/O.
+
+    Intended for evaluation harnesses and testing that operate on committed
+    parse artifact snapshots rather than live pipeline outputs.
+    """
+    context = _SectionContext(
+        document_type=document_type,
+        document_class=document_class,
+    )
+    return _build_sections(
+        doc_id=doc_id,
+        structure=structure,
+        heading_tree=heading_tree,
+        context=context,
+    )
+
+
 def _build_sections(
     *,
     doc_id: str,

@@ -11,6 +11,9 @@ validation.
 - `tests/golden/` holds expected structured outputs or Markdown snapshots.
 - `tests/` remains the home for the executable checks that compare live output to
   those fixtures or golden files.
+- Parser benchmark sets live under `tests/fixtures/parser_eval/<fixture_set>/`
+  with one directory per fixture containing the source PDF, ground truth, and
+  committed parser artifacts for each parser lane under evaluation.
 
 ## What belongs here
 
