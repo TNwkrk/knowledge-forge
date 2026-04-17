@@ -16,13 +16,15 @@ def test_evaluate_parser_scores_committed_fixture_set() -> None:
 
     assert report.fixture_set == "baseline"
     assert report.parser == "docling"
-    assert len(report.fixture_reports) == 3
+    fixture_ids = {fr.fixture_id for fr in report.fixture_reports}
+    assert {"manual-structured", "scanned-ocr", "sop-checklist"}.issubset(fixture_ids)
     assert report.metrics.heading_accuracy == 100.0
     assert report.metrics.table_extraction_accuracy == 100.0
     assert report.metrics.text_completeness == 100.0
     assert report.metrics.structure_fidelity == 100.0
     assert report.overall_score == 100.0
-    assert "workflow" in report.fixture_reports[2].actual_section_types
+    sop_report = next(fr for fr in report.fixture_reports if fr.fixture_id == "sop-checklist")
+    assert "workflow" in sop_report.actual_section_types
 
 
 def test_eval_parser_cli_writes_report(tmp_path: Path) -> None:

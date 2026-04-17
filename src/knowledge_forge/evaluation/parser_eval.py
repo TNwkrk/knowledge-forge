@@ -19,7 +19,7 @@ from knowledge_forge.parse.quality import (
     StructuredParseArtifact,
     TablesArtifact,
 )
-from knowledge_forge.parse.sectioning import _build_sections, _SectionContext
+from knowledge_forge.parse.sectioning import build_sections_from_artifacts
 
 
 class ExpectedTable(BaseModel):
@@ -83,6 +83,7 @@ class ParserEvalReport(BaseModel):
 def evaluate_parser(fixture_set: str, parser: str) -> ParserEvalReport:
     """Evaluate committed parser artifacts for one fixture set and parser lane."""
     fixture_root = _fixture_set_root(fixture_set)
+    repo_root = Path(__file__).resolve().parents[3]
     fixture_reports: list[ParserFixtureScore] = []
     parser_versions: list[str] = []
 
@@ -90,6 +91,12 @@ def evaluate_parser(fixture_set: str, parser: str) -> ParserEvalReport:
         ground_truth = ParserEvalFixtureGroundTruth.model_validate_json(
             (fixture_dir / "ground_truth.json").read_text(encoding="utf-8")
         )
+        if ground_truth.fixture_id != fixture_dir.name:
+            raise ValueError(
+                f"fixture_id mismatch in '{fixture_dir}': "
+                f"ground_truth.fixture_id={ground_truth.fixture_id!r} "
+                f"but directory name is {fixture_dir.name!r}"
+            )
         bundle = _load_fixture_bundle(fixture_dir, parser)
         metrics = ParserEvalMetrics(
             heading_accuracy=_score_heading_accuracy(ground_truth.expected_headings, bundle.headings),
@@ -113,7 +120,7 @@ def evaluate_parser(fixture_set: str, parser: str) -> ParserEvalReport:
             ParserFixtureScore(
                 fixture_id=ground_truth.fixture_id,
                 title=ground_truth.title,
-                source_pdf=str(fixture_dir / "source.pdf"),
+                source_pdf=str((fixture_dir / "source.pdf").relative_to(repo_root)),
                 parser=bundle.meta.parser,
                 parser_version=bundle.meta.parser_version,
                 metrics=metrics,
@@ -218,14 +225,12 @@ def _score_text_completeness(required_text: list[str], content: str) -> float:
 
 
 def _score_structure_fidelity(ground_truth: ParserEvalFixtureGroundTruth, bundle: ParseArtifactBundle) -> float:
-    sections = _build_sections(
+    sections = build_sections_from_artifacts(
         doc_id=bundle.doc_id,
         structure=bundle.structure,
         heading_tree=bundle.headings,
-        context=_SectionContext(
-            document_type=ground_truth.document_type,
-            document_class=ground_truth.document_class,
-        ),
+        document_type=ground_truth.document_type,
+        document_class=ground_truth.document_class,
     )
     actual_count = len(sections)
     if ground_truth.expected_section_count == 0:
@@ -244,14 +249,12 @@ def _score_structure_fidelity(ground_truth: ParserEvalFixtureGroundTruth, bundle
 
 
 def _actual_section_types(bundle: ParseArtifactBundle, ground_truth: ParserEvalFixtureGroundTruth) -> list[str]:
-    sections = _build_sections(
+    sections = build_sections_from_artifacts(
         doc_id=bundle.doc_id,
         structure=bundle.structure,
         heading_tree=bundle.headings,
-        context=_SectionContext(
-            document_type=ground_truth.document_type,
-            document_class=ground_truth.document_class,
-        ),
+        document_type=ground_truth.document_type,
+        document_class=ground_truth.document_class,
     )
     seen: list[str] = []
     for section in sections:
