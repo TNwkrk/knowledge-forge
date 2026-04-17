@@ -670,10 +670,35 @@ def build_extraction_fingerprint(
     """Build the durable fingerprint for one section/record-type work item."""
     template = prompt_template or load_prompt_template(record_type)
     schema_version = build_schema_version(record_type)
+    prompt_input_payload = {
+        "section": {
+            "doc_id": section.doc_id,
+            "section_id": section.section_id,
+            "content": section.content,
+            "title": getattr(section, "title", None),
+            "heading_path": getattr(section, "heading_path", None),
+            "page_range": getattr(section, "page_range", None),
+            "section_type": getattr(section, "section_type", None),
+        },
+        "template": {
+            "system": template.system,
+            "user": template.user,
+            "schema_ref": template.schema_ref,
+            "version": template.version,
+        },
+    }
+    prompt_input_hash = sha256(
+        json.dumps(
+            prompt_input_payload,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
+        ).encode("utf-8")
+    ).hexdigest()
     return ExtractionFingerprint(
         doc_id=section.doc_id,
         section_id=section.section_id,
-        section_content_hash=sha256(section.content.encode("utf-8")).hexdigest(),
+        section_content_hash=prompt_input_hash,
         prompt_template=f"extraction/{record_type}",
         prompt_version=template.version,
         schema_name=template.schema_ref,
