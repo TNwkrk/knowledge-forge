@@ -141,29 +141,28 @@ def render_inline_contradiction_notes(
 
 def _build_note_entries(report: ContradictionAnalysisReport) -> list[ContradictionNoteEntry]:
     claims_by_id = {claim.record_id: claim for claim in report.claims}
-    supersession_by_pair = {
-        frozenset((candidate.superseding_record_id, candidate.superseded_record_id)): candidate
-        for candidate in report.supersessions
-    }
-
     entries: list[ContradictionNoteEntry] = []
     for candidate in report.contradictions:
         matched_claims = [claims_by_id[record_id] for record_id in candidate.record_ids if record_id in claims_by_id]
         if len(matched_claims) < 2:
             continue
         left, right = sorted(matched_claims[:2], key=lambda claim: claim.record_id)
-        supersession = supersession_by_pair.get(frozenset(candidate.record_ids))
+        supersession = candidate.supersession
         entries.append(
             ContradictionNoteEntry(
                 conflicting_claim=candidate.conflicting_claim,
                 rationale=candidate.rationale,
                 left=left,
                 right=right,
-                supersession_precedence_basis=(supersession.precedence_basis if supersession is not None else None),
+                supersession_precedence_basis=(
+                    supersession.precedence_rule_applied if supersession is not None else None
+                ),
                 recommended_resolution=_recommended_resolution(
                     left,
                     right,
-                    supersession_precedence_basis=(supersession.precedence_basis if supersession is not None else None),
+                    supersession_precedence_basis=(
+                        supersession.precedence_rule_applied if supersession is not None else None
+                    ),
                 ),
             )
         )

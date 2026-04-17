@@ -18,7 +18,9 @@ from knowledge_forge.extract import (
     ProcedureStep,
     RevisionNote,
     SpecValue,
+    SupersessionAssessment,
     SupersessionCandidate,
+    SupersessionRecordMetadata,
     TroubleshootingEntry,
     Warning,
     get_json_schema,
@@ -175,6 +177,36 @@ VALID_PAYLOADS: dict[str, tuple[type[object], dict[str, object]]] = {
             "conflicting_claim": "Nominal supply voltage differs between two authoritative sources.",
             "rationale": "One manual states 24 VDC and a later bulletin states 48 VDC.",
             "review_status": "pending",
+            "compared_records": [
+                {
+                    "record_id": "dc1000--spec--001",
+                    "source_doc_id": "honeywell-dc1000-service-manual-rev3",
+                    "document_type": "Service Manual",
+                    "document_class": "authoritative-technical",
+                    "revision": "Rev 3",
+                    "publication_date": "2025-01-12",
+                    "precedence_level": 2,
+                    "precedence_label": "revised manual",
+                },
+                {
+                    "record_id": "dc1000--spec--014",
+                    "source_doc_id": "honeywell-dc1000-service-bulletin-revb",
+                    "document_type": "Service Bulletin",
+                    "document_class": "authoritative-technical",
+                    "revision": "Rev B",
+                    "publication_date": "2025-02-05",
+                    "precedence_level": 1,
+                    "precedence_label": "service bulletin or addendum",
+                },
+            ],
+            "supersession": {
+                "superseding_record_id": "dc1000--spec--014",
+                "superseded_record_id": "dc1000--spec--001",
+                "confidence": "high",
+                "reason": "Service bulletin has stronger authority than the revised manual.",
+                "precedence_rule_applied": "service bulletin or addendum (level 1) outranks revised manual (level 2)",
+                "document_types_compared": ["Service Bulletin", "Service Manual"],
+            },
         },
     ),
 }
@@ -208,6 +240,34 @@ def test_extraction_schema_models_accept_valid_examples(
     assert instance.source_doc_id == payload["source_doc_id"]
     assert instance.source_page_range.start_page == payload["source_page_range"]["start_page"]
     assert get_schema_model(record_type) is model
+
+
+def test_supersession_assessment_models_accept_valid_examples() -> None:
+    metadata = SupersessionRecordMetadata.model_validate(
+        {
+            "record_id": "rec-001",
+            "source_doc_id": "doc-001",
+            "document_type": "Service Manual",
+            "document_class": "authoritative-technical",
+            "revision": "Rev 3",
+            "publication_date": "2025-01-12",
+            "precedence_level": 2,
+            "precedence_label": "revised manual",
+        }
+    )
+    assessment = SupersessionAssessment.model_validate(
+        {
+            "superseding_record_id": "rec-002",
+            "superseded_record_id": "rec-001",
+            "confidence": "medium",
+            "reason": "Rev 4 is newer than Rev 3.",
+            "precedence_rule_applied": "same document type; newer revision `Rev 4` supersedes `Rev 3`",
+            "document_types_compared": ["Service Manual", "Service Manual"],
+        }
+    )
+
+    assert metadata.precedence_level == 2
+    assert assessment.confidence == "medium"
 
 
 @pytest.mark.parametrize(("record_type", "model", "payload"), VALID_CASES)

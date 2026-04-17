@@ -3,14 +3,19 @@
 from __future__ import annotations
 
 import json
+from datetime import date
 from pathlib import Path
 
 from click.testing import CliRunner
 
 from knowledge_forge.cli import cli
-from knowledge_forge.extract import analyze_contradictions, find_contradiction_candidates
+from knowledge_forge.extract import (
+    analyze_contradictions,
+    find_contradiction_candidates,
+    find_supersession_assessments,
+)
 from knowledge_forge.intake.importer import RegistrationRequest, register_document
-from knowledge_forge.intake.manifest import BucketAssignment, DocumentStatus
+from knowledge_forge.intake.manifest import BucketAssignment, DocumentStatus, slugify
 
 
 def _write_pdf(path: Path) -> Path:
@@ -26,6 +31,7 @@ def _register_fixture_doc(
     document_type: str,
     document_class: str,
     revision: str,
+    publication_date: str | None = None,
     bucket_id: str = "honeywell/dc1000/family",
     models: list[str] | None = None,
 ) -> str:
@@ -36,7 +42,7 @@ def _register_fixture_doc(
         model_applicability=models or ["DC1000"],
         document_type=document_type,
         revision=revision,
-        publication_date=None,
+        publication_date=(date.fromisoformat(publication_date) if publication_date is not None else None),
         language="en",
         priority=1,
         document_class=document_class,
@@ -305,8 +311,125 @@ def test_analyze_contradictions_builds_cross_document_type_supersession_candidat
     supersession = report.supersessions[0]
     assert supersession.superseding_record_id == "startup-001::step-001"
     assert supersession.superseded_record_id == "startup-002::step-001"
-    assert "level 2" in supersession.precedence_basis
-    assert "level 5" in supersession.precedence_basis
+    assert supersession.confidence == "high"
+    assert "level 2" in supersession.precedence_rule_applied
+    assert "level 5" in supersession.precedence_rule_applied
+    assert contradiction.supersession == supersession
+    assert contradiction.supersession.document_types_compared == ["Service Manual", "SOP"]
+
+
+def test_find_supersession_assessments_flags_same_tier_revision_changes(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    bucket_id = "honeywell/dc1000/family"
+    older_doc_id = _register_fixture_doc(
+        _write_pdf(tmp_path / "manual-rev2.pdf"),
+        data_dir,
+        document_type="Service Manual",
+        document_class="authoritative-technical",
+        revision="Rev 2",
+        publication_date="2024-01-15",
+    )
+    newer_doc_id = _register_fixture_doc(
+        _write_pdf(tmp_path / "manual-rev3.pdf"),
+        data_dir,
+        document_type="Service Manual",
+        document_class="authoritative-technical",
+        revision="Rev 3",
+        publication_date="2025-03-20",
+    )
+
+    for doc_id, instruction in (
+        (older_doc_id, "Set parameter P-14 to 60 seconds before startup."),
+        (newer_doc_id, "Set parameter P-14 to 90 seconds before startup."),
+    ):
+        _write_record(
+            data_dir,
+            doc_id,
+            "procedure",
+            f"startup-{doc_id[-4:]}",
+            {
+                **_base_payload(
+                    doc_id,
+                    heading="Startup Procedure",
+                    start_page=12,
+                    end_page=13,
+                    bucket_id=bucket_id,
+                ),
+                "title": "Configure startup delay",
+                "steps": [
+                    {
+                        **_base_payload(
+                            doc_id,
+                            heading="Startup Procedure",
+                            start_page=12,
+                            end_page=12,
+                            bucket_id=bucket_id,
+                        ),
+                        "step_number": 1,
+                        "instruction": instruction,
+                        "note": None,
+                        "caution": None,
+                        "figure_ref": None,
+                    }
+                ],
+                "applicability": _applicability_payload(doc_id, bucket_id),
+                "warnings": [],
+                "tools_required": [],
+            },
+        )
+
+    assessments = find_supersession_assessments(bucket_id, data_dir=data_dir)
+
+    assert len(assessments) == 1
+    assessment = assessments[0]
+    assert assessment.confidence == "medium"
+    assert assessment.document_types_compared == ["Service Manual", "Service Manual"]
+    assert "newer revision `Rev 3` supersedes `Rev 2`" in assessment.precedence_rule_applied
+
+
+def test_find_supersession_assessments_marks_same_tier_cross_type_cases_low_confidence(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    bucket_id = "honeywell/dc1000/family"
+    bulletin_doc_id = _register_fixture_doc(
+        _write_pdf(tmp_path / "bulletin.pdf"),
+        data_dir,
+        document_type="Service Bulletin",
+        document_class="authoritative-technical",
+        revision="Rev A",
+    )
+    addendum_doc_id = _register_fixture_doc(
+        _write_pdf(tmp_path / "addendum.pdf"),
+        data_dir,
+        document_type="Addendum",
+        document_class="authoritative-technical",
+        revision="Rev A",
+    )
+
+    for doc_id, document_type, text in (
+        (bulletin_doc_id, "Service Bulletin", "Torque the terminal lugs to 14 N m."),
+        (addendum_doc_id, "Addendum", "Torque the terminal lugs to 12 N m."),
+    ):
+        _write_record(
+            data_dir,
+            doc_id,
+            "warning",
+            f"warning-{slugify(document_type)}",
+            {
+                **_base_payload(doc_id, heading="Electrical Notice", start_page=2, end_page=2, bucket_id=bucket_id),
+                "severity": "warning",
+                "text": text,
+                "context": "Terminal lugs",
+                "applicability": _applicability_payload(doc_id, bucket_id),
+            },
+        )
+
+    assessments = find_supersession_assessments(bucket_id, data_dir=data_dir)
+
+    assert len(assessments) == 1
+    assessment = assessments[0]
+    assert assessment.confidence == "low"
+    assert set(assessment.document_types_compared) == {"Addendum", "Service Bulletin"}
+    assert "same precedence tier" in assessment.precedence_rule_applied
 
 
 def test_analyze_contradictions_cli_reports_candidates_and_supersession(tmp_path: Path) -> None:
@@ -367,3 +490,123 @@ def test_analyze_contradictions_cli_reports_candidates_and_supersession(tmp_path
     assert "Supersessions: 1" in result.output
     assert "CONTRADICTIONS" in result.output
     assert "SUPERSESSIONS" in result.output
+    assert "\thigh\t" in result.output
+
+
+def test_find_supersession_assessments_uses_publication_date_when_revisions_are_equal(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    bucket_id = "honeywell/dc1000/family"
+    # Use revision strings whose numeric sort key is identical (both parse to (2, 3))
+    # so _revision_or_date_supersession skips the revision path and falls through to
+    # publication_date.  Distinct revision strings are required because doc_id is
+    # derived from revision, and two identical doc_ids would collide during registration.
+    older_doc_id = _register_fixture_doc(
+        _write_pdf(tmp_path / "manual-2023.pdf"),
+        data_dir,
+        document_type="Service Manual",
+        document_class="authoritative-technical",
+        revision="Rev-3-2023",
+        publication_date="2023-06-01",
+    )
+    newer_doc_id = _register_fixture_doc(
+        _write_pdf(tmp_path / "manual-2025.pdf"),
+        data_dir,
+        document_type="Service Manual",
+        document_class="authoritative-technical",
+        revision="Rev-3-2025",
+        publication_date="2025-01-15",
+    )
+
+    for doc_id, instruction in (
+        (older_doc_id, "Set parameter P-22 to 45 seconds before initiating shutdown."),
+        (newer_doc_id, "Set parameter P-22 to 60 seconds before initiating shutdown."),
+    ):
+        _write_record(
+            data_dir,
+            doc_id,
+            "procedure",
+            f"shutdown-{doc_id[-4:]}",
+            {
+                **_base_payload(doc_id, heading="Shutdown Procedure", start_page=14, end_page=15, bucket_id=bucket_id),
+                "title": "Configure shutdown delay",
+                "steps": [
+                    {
+                        **_base_payload(
+                            doc_id,
+                            heading="Shutdown Procedure",
+                            start_page=14,
+                            end_page=14,
+                            bucket_id=bucket_id,
+                        ),
+                        "step_number": 1,
+                        "instruction": instruction,
+                        "note": None,
+                        "caution": None,
+                        "figure_ref": None,
+                    }
+                ],
+                "applicability": _applicability_payload(doc_id, bucket_id),
+                "warnings": [],
+                "tools_required": [],
+            },
+        )
+
+    assessments = find_supersession_assessments(bucket_id, data_dir=data_dir)
+
+    assert len(assessments) == 1
+    assessment = assessments[0]
+    assert assessment.confidence == "medium"
+    assert assessment.document_types_compared == ["Service Manual", "Service Manual"]
+    assert "newer publication date" in assessment.precedence_rule_applied
+    assert "2025-01-15" in assessment.precedence_rule_applied
+    assert "2023-06-01" in assessment.precedence_rule_applied
+
+
+def test_analyze_supersession_cli_reports_assessments(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    bucket_id = "honeywell/dc1000/family"
+    bulletin_doc_id = _register_fixture_doc(
+        _write_pdf(tmp_path / "bulletin.pdf"),
+        data_dir,
+        document_type="Service Bulletin",
+        document_class="authoritative-technical",
+        revision="Rev C",
+    )
+    manual_doc_id = _register_fixture_doc(
+        _write_pdf(tmp_path / "manual.pdf"),
+        data_dir,
+        document_type="Service Manual",
+        document_class="authoritative-technical",
+        revision="Original",
+    )
+
+    for doc_id, text in (
+        (bulletin_doc_id, "Replace fuse F2 with a 4A slow-blow fuse."),
+        (manual_doc_id, "Replace fuse F2 with a 2A slow-blow fuse."),
+    ):
+        _write_record(
+            data_dir,
+            doc_id,
+            "warning",
+            f"fuse-{doc_id[-4:]}",
+            {
+                **_base_payload(doc_id, heading="Fuse Service", start_page=6, end_page=6, bucket_id=bucket_id),
+                "severity": "warning",
+                "text": text,
+                "context": "Fuse replacement",
+                "applicability": _applicability_payload(doc_id, bucket_id),
+            },
+        )
+
+    runner = CliRunner()
+    result = runner.invoke(
+        cli,
+        ["analyze", "supersession", bucket_id],
+        env={"KNOWLEDGE_FORGE_DATA_DIR": str(data_dir)},
+    )
+
+    assert result.exit_code == 0
+    assert f"Bucket: {bucket_id}" in result.output
+    assert "Supersession assessments: 1" in result.output
+    assert "SUPERSESSION ASSESSMENTS" in result.output
+    assert "\thigh\t" in result.output
