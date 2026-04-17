@@ -1,0 +1,72 @@
+{
+  "source_doc_id": "manual-structured",
+  "source_page_range": {
+    "start_page": 2,
+    "end_page": 2
+  },
+  "source_heading": "Startup",
+  "parser_version": "test-docling-1.0",
+  "extraction_version": "extraction/baseline@v1:test-model",
+  "confidence": 0.94,
+  "bucket_context": [
+    {
+      "bucket_id": "acme/manual-structured/family",
+      "dimension": "family",
+      "value": "ACME"
+    }
+  ],
+  "title": "Panel startup",
+  "steps": [
+    {
+      "source_doc_id": "manual-structured",
+      "source_page_range": {
+        "start_page": 2,
+        "end_page": 2
+      },
+      "source_heading": "Startup",
+      "parser_version": "test-docling-1.0",
+      "extraction_version": "extraction/baseline@v1:test-model",
+      "confidence": 0.94,
+      "bucket_context": [
+        {
+          "bucket_id": "acme/manual-structured/family",
+          "dimension": "family",
+          "value": "ACME"
+        }
+      ],
+      "step_number": 1,
+      "instruction": "Verify the cabinet door is latched.",
+      "note": "Confirm lockout is cleared.",
+      "caution": null,
+      "figure_ref": null
+    },
+    {
+      "source_doc_id": "manual-structured",
+      "source_page_range": {
+        "start_page": 2,
+        "end_page": 2
+      },
+      "source_heading": "Startup",
+      "parser_version": "test-docling-1.0",
+      "extraction_version": "extraction/baseline@v1:test-model",
+      "confidence": 0.94,
+      "bucket_context": [
+        {
+          "bucket_id": "acme/manual-structured/family",
+          "dimension": "family",
+          "value": "ACME"
+        }
+      ],
+      "step_number": 2,
+      "instruction": "Apply control power.",
+      "note": null,
+      "caution": "Do not energize with wet hands.",
+      "figure_ref": null
+    }
+  ],
+  "applicability": null,
+  "warnings": [],
+  "tools_required": [
+    "multimeter"
+  ]
+}

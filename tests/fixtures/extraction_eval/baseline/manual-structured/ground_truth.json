@@ -1,0 +1,50 @@
+{
+  "fixture_id": "manual-structured",
+  "title": "Structured OEM manual extraction fixture",
+  "source_pdf": "tests/fixtures/parser_eval/baseline/manual-structured/source.pdf",
+  "expected_records": {
+    "procedure": [
+      {
+        "title": "Panel startup",
+        "steps": [
+          {
+            "step_number": 1,
+            "instruction": "Verify the cabinet door is latched.",
+            "note": "Confirm lockout is cleared.",
+            "caution": null,
+            "figure_ref": null
+          },
+          {
+            "step_number": 2,
+            "instruction": "Apply control power.",
+            "note": null,
+            "caution": "Do not energize with wet hands.",
+            "figure_ref": null
+          }
+        ],
+        "applicability": null,
+        "warnings": [],
+        "tools_required": [
+          "multimeter"
+        ]
+      }
+    ],
+    "warning": [
+      {
+        "severity": "warning",
+        "text": "Wear gloves before opening the panel.",
+        "context": "Safety",
+        "applicability": null
+      }
+    ],
+    "spec_value": [
+      {
+        "parameter": "Voltage",
+        "value": "120",
+        "unit": "V",
+        "conditions": null,
+        "applicability": null
+      }
+    ]
+  }
+}

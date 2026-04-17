@@ -1,0 +1,22 @@
+{
+  "source_doc_id": "manual-structured",
+  "source_page_range": {
+    "start_page": 1,
+    "end_page": 1
+  },
+  "source_heading": "Safety",
+  "parser_version": "test-docling-1.0",
+  "extraction_version": "extraction/baseline@v1:test-model",
+  "confidence": 0.91,
+  "bucket_context": [
+    {
+      "bucket_id": "acme/manual-structured/family",
+      "dimension": "family",
+      "value": "ACME"
+    }
+  ],
+  "severity": "warning",
+  "text": "Wear gloves before opening the panel.",
+  "context": "Safety",
+  "applicability": null
+}

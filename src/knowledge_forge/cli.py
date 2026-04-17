@@ -23,7 +23,12 @@ from knowledge_forge.compile import (
     render_contradiction_notes,
     render_contradiction_review_report,
 )
-from knowledge_forge.evaluation import evaluate_parser, write_parser_report
+from knowledge_forge.evaluation import (
+    evaluate_extraction,
+    evaluate_parser,
+    write_extraction_report,
+    write_parser_report,
+)
 from knowledge_forge.extract import (
     analyze_contradictions,
     audit_document_provenance,
@@ -98,6 +103,28 @@ def eval_parser(fixture_set: str, parser_name: str) -> None:
     click.echo(f"Table extraction accuracy: {report.metrics.table_extraction_accuracy:.2f}")
     click.echo(f"Text completeness: {report.metrics.text_completeness:.2f}")
     click.echo(f"Structure fidelity: {report.metrics.structure_fidelity:.2f}")
+    click.echo(f"Report: {report_path}")
+
+
+@eval.command("extraction")
+@click.argument("fixture_set", type=str)
+def eval_extraction(fixture_set: str) -> None:
+    """Score extracted records against committed benchmark fixture ground truth."""
+    try:
+        report = evaluate_extraction(fixture_set)
+    except FileNotFoundError as exc:
+        raise click.ClickException(str(exc)) from exc
+
+    report_path = write_extraction_report(report, output_dir=get_data_dir() / "evaluation" / "extraction")
+    click.echo(f"Fixture set: {report.fixture_set}")
+    click.echo(f"Extraction versions: {', '.join(report.extraction_versions)}")
+    click.echo(f"Overall score: {report.overall_score:.2f}")
+    click.echo(f"Record count accuracy: {report.metrics.record_count_accuracy:.2f}")
+    for record_type, score in sorted(report.metrics.field_accuracy.items()):
+        click.echo(f"Field accuracy ({record_type}): {score:.2f}")
+    click.echo(f"Provenance completeness: {report.metrics.provenance_completeness:.2f}")
+    click.echo(f"Schema compliance rate: {report.metrics.schema_compliance_rate:.2f}")
+    click.echo(f"Confidence mean: {report.metrics.confidence_distribution.mean_confidence:.3f}")
     click.echo(f"Report: {report_path}")
 
 
