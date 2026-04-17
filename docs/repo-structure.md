@@ -250,8 +250,8 @@ needs them and the expected output shape is stable enough to review.
 
 - **doc_id**: Derived from manifest fields. Format: `{manufacturer}-{family}-{doc_type}-{revision}` slugified. Example: `honeywell-dc1000-service-manual-rev3`. The `doc_type` segment reflects the full document type vocabulary (service-manual, installation-manual, bulletin, datasheet, parts-list, sop, checklist, drawing, field-form, training-material, etc.)
 - **curated_bucket**: Optional manifest hint for a manufacturer-scoped cross-family bucket such as `Pump Station Control Stack`. This does not replace the real `family` value; it adds an extra bucket dimension when a reviewed source pack intentionally spans several product families.
-- **section_id**: `{doc_id}--{section_type}--{sequence}`. Example: `honeywell-dc1000-service-manual-rev3--maintenance--003`
-- **record_id**: `{section_id}--{record_type}--{sequence}`. Example: `honeywell-dc1000-service-manual-rev3--maintenance--003--procedure--001`
+- **section_id**: `{doc_id}--{slug(title)}--{digest}`. Example: `honeywell-dc1000-service-manual-rev3--maintenance-procedures--a1b2c3d4`. The title-derived slug may be truncated during generation.
+- **record_id**: `{section_id}--{record_type}--{sequence}`. Example: `honeywell-dc1000-service-manual-rev3--maintenance-procedures--a1b2c3d4--procedure--001`
 - **publish_run_id**: `kf-{YYYYMMDD}-{sequence}`. Example: `kf-20240115-001`
 
 ### Artifact lifecycle

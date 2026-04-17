@@ -315,7 +315,7 @@ def test_normalize_skips_expensive_density_pass_for_large_digital_docs(monkeypat
     calls: list[tuple[str, int]] = []
 
     def fake_density(pdf_path: Path, page_index: int, _page: object) -> float:
-        calls.append((pdf_path.name, page_index))
+        calls.append((pdf_path.parent.name, page_index))
         return 5.0
 
     monkeypatch.setattr("knowledge_forge.normalize.ocr._extract_text_density", fake_density)
@@ -330,7 +330,7 @@ def test_normalize_skips_expensive_density_pass_for_large_digital_docs(monkeypat
     assert result.ocr_applied is False
     assert result.page_count == 30
     assert len(calls) == 30
-    assert all(name == f"{doc_id}.pdf" for name, _ in calls)
+    assert all(parent == "normalized" for parent, _ in calls)
 
 
 def test_normalize_cli_supports_doc_id_and_all(monkeypatch, tmp_path: Path) -> None:

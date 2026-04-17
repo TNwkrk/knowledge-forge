@@ -122,6 +122,18 @@ def register_source_pack(
         pdf_path = resolved_source_dir / document.filename
         if not pdf_path.exists():
             missing_files.append(pdf_path)
+
+    if missing_files and not allow_missing:
+        missing = ", ".join(str(path) for path in missing_files)
+        raise FileNotFoundError(f"missing source-pack files: {missing}")
+
+    missing_filenames = {path.name for path in missing_files}
+    for document in pack.documents:
+        if document.include == "conditional" and not include_conditionals:
+            continue
+
+        pdf_path = resolved_source_dir / document.filename
+        if pdf_path.name in missing_filenames:
             continue
 
         registered.append(
@@ -143,10 +155,6 @@ def register_source_pack(
                 data_dir=data_dir,
             )
         )
-
-    if missing_files and not allow_missing:
-        missing = ", ".join(str(path) for path in missing_files)
-        raise FileNotFoundError(f"missing source-pack files: {missing}")
 
     return RegisteredSourcePack(
         pack=pack,

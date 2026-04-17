@@ -257,11 +257,16 @@ def _load_family_overview_input(bucket_id: str, *, data_dir: Path) -> FamilyOver
 
     manifests = sorted(manifests, key=lambda manifest: manifest.doc_id)
     first_document = manifests[0].document
-    matching_assignment = next(
+    matching_assignments = [
         assignment
         for assignment in manifests[0].bucket_assignments
         if assignment.bucket_id == bucket_id and assignment.dimension in FAMILY_DIMENSIONS
-    )
+    ]
+    if not matching_assignments:
+        raise ValueError(
+            f"no matching bucket assignment found for bucket_id '{bucket_id}' in manifest '{manifests[0].doc_id}'"
+        )
+    matching_assignment = matching_assignments[0]
     topics = sorted(
         {topic for topic in _discover_topics_for_bucket(bucket_id, data_dir=data_dir) if topic in TOPIC_TITLES}
     )

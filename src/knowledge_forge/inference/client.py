@@ -77,6 +77,7 @@ class InferenceClient:
             "temperature": self.config.temperature,
             "max_output_tokens": self.config.max_tokens,
         }
+        request_schema: dict[str, Any] | None = None
         if schema is not None:
             request_schema = prepare_openai_json_schema(schema)
             request_args["text"] = {
@@ -120,7 +121,7 @@ class InferenceClient:
                     if response_length > MAX_JSON_ERROR_SNIPPET_LENGTH:
                         snippet += "..."
                     raise ValueError(f"response was not valid JSON: {exc.msg}. Output snippet: {snippet!r}") from exc
-                validation = validate_response(parsed_json, schema)
+                validation = validate_response(parsed_json, request_schema)
                 if not validation.valid:
                     snippet = response_text[:MAX_JSON_ERROR_SNIPPET_LENGTH]
                     if len(response_text) > MAX_JSON_ERROR_SNIPPET_LENGTH:

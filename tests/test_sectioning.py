@@ -258,6 +258,14 @@ def test_section_document_handles_documents_without_headings(tmp_path: Path) -> 
     headings = {"doc_id": doc_id, "headings": []}
     _write_parsed_artifacts(data_dir, doc_id=doc_id, structure=structure, headings=headings)
 
+    sections = section_document(doc_id, data_dir=data_dir)
+
+    assert len(sections) == 1
+    assert sections[0].title == "Plain Service Notes"
+    assert sections[0].page_range == (1, 2)
+    assert "Inspect wiring before startup." in sections[0].content
+    assert "Log all error codes for review." in sections[0].content
+
 
 def test_section_document_truncates_overlong_section_ids_for_persistence(tmp_path: Path) -> None:
     data_dir = tmp_path / "data"
