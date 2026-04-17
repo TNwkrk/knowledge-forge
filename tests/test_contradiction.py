@@ -496,6 +496,10 @@ def test_analyze_contradictions_cli_reports_candidates_and_supersession(tmp_path
 def test_find_supersession_assessments_uses_publication_date_when_revisions_are_equal(tmp_path: Path) -> None:
     data_dir = tmp_path / "data"
     bucket_id = "honeywell/dc1000/family"
+    # Use revision strings whose numeric sort key is identical (both parse to (2, 3))
+    # so _revision_or_date_supersession skips the revision path and falls through to
+    # publication_date.  Distinct revision strings are required because doc_id is
+    # derived from revision, and two identical doc_ids would collide during registration.
     older_doc_id = _register_fixture_doc(
         _write_pdf(tmp_path / "manual-2023.pdf"),
         data_dir,
