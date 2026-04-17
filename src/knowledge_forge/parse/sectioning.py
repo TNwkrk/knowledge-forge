@@ -311,7 +311,6 @@ _NEUTRAL_SECTION_TITLES = {
     "instructions",
     "introduction",
     "notes",
-    "notes:",
     "overview",
     "related documentation",
     "related publications",
