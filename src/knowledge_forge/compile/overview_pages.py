@@ -156,11 +156,11 @@ def _render_family_overview(family_input: FamilyOverviewInput) -> str:
         "",
         "## Family Summary",
         "",
-            f"- Bucket: `{family_input.bucket_id}`",
-            (
-                f"- Family description: Review index for {family_input.manufacturer} "
-                f"{family_input.bucket_label} knowledge artifacts."
-            ),
+        f"- Bucket: `{family_input.bucket_id}`",
+        (
+            f"- Family description: Review index for {family_input.manufacturer} "
+            f"{family_input.bucket_label} knowledge artifacts."
+        ),
         f"- Document count: {len(family_input.manifests)}",
         f"- Models covered: {', '.join(models) if models else 'unknown'}",
         f"- Topic pages: {len(family_input.topics)}",

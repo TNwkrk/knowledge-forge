@@ -171,8 +171,12 @@ def _load_normalization_meta(meta_path: Path) -> NormalizationResult | None:
 
 def _persist_manifest_status(manifest: ManifestEntry, data_dir: Path) -> None:
     """Transition a manifest to normalized status and persist it."""
-    if manifest.document.status.value in {DocumentStatus.PARSED.value, DocumentStatus.EXTRACTED.value,
-        DocumentStatus.COMPILED.value, DocumentStatus.PUBLISHED.value}:
+    if manifest.document.status.value in {
+        DocumentStatus.PARSED.value,
+        DocumentStatus.EXTRACTED.value,
+        DocumentStatus.COMPILED.value,
+        DocumentStatus.PUBLISHED.value,
+    }:
         return
     normalized = manifest.transition_status(
         DocumentStatus.NORMALIZED,

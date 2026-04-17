@@ -82,9 +82,7 @@ def _flatten_json_schema(schema: dict[str, object]) -> dict[str, object]:
     return flattened
 
 
-JSON_SCHEMA_REGISTRY = {
-    name: _flatten_json_schema(schema) for name, schema in JSON_SCHEMA_REGISTRY.items()
-}
+JSON_SCHEMA_REGISTRY = {name: _flatten_json_schema(schema) for name, schema in JSON_SCHEMA_REGISTRY.items()}
 
 
 def get_schema_model(record_type: str) -> RecordSchema:
