@@ -119,7 +119,7 @@ def normalize_document(doc_id: str, *, data_dir: Path | None = None) -> Normaliz
         shutil.copy2(raw_path, output_path)
         ocr_completed = False
 
-    normalized_pages = _inspect_pdf_pages(output_path)
+    normalized_pages = _inspect_pdf_pages(output_path) if ocr_completed else raw_pages
     page_metadata = _build_page_metadata(output_path, page_analyses, normalized_pages, settings)
     pages_ocrd = sum(1 for page in page_metadata if page.ocr_applied)
 

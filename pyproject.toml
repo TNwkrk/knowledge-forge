@@ -14,6 +14,7 @@ dependencies = [
   "jsonschema>=4,<5",
   "ocrmypdf",
   "openai",
+  "pikepdf>=8,<10",
   "prefect",
   "pydantic>=2,<3",
   "PyYAML>=6,<7",
