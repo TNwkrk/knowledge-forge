@@ -15,6 +15,8 @@ is the source of truth for artifact paths and naming conventions.
   `*.meta.json` metadata for each normalization run.
 - `parsed/` stores parser outputs for each document under `parsed/{doc_id}/`.
 - `sections/` stores canonical section JSON files under `sections/{doc_id}/`.
+- `extraction_runs/` stores durable extraction-run checkpoints under
+  `extraction_runs/{run_id}.json`.
 - `extracted/` stores extraction records under
   `extracted/{doc_id}/{record_type}/`.
 - `compiled/` stores generated wiki artifacts. The repo structure doc reserves
@@ -31,6 +33,7 @@ is the source of truth for artifact paths and naming conventions.
 - `doc_id`: `{manufacturer}-{family}-{doc_type}-{revision}` slugified
 - `section_id`: `{doc_id}--{section_type}--{sequence}`
 - `record_id`: `{section_id}--{record_type}--{sequence}`
+- `run_id`: `er-{YYYYMMDD}-{sequence}`
 - `publish_run_id`: `kf-{YYYYMMDD}-{sequence}`
 
 Examples from the repo structure doc:
@@ -48,3 +51,7 @@ Examples from the repo structure doc:
   normal Knowledge Forge runs.
 - Preserve provenance and reviewability so reruns and PR-based publication stay
   auditable.
+- Treat `extraction_runs/` as the source of truth for extraction progress during
+  long or resumable runs. Successful item reuse depends on the persisted
+  fingerprint stored there, and output replacement for one `section_id +
+  record_type` now removes stale record files and superseded review flags.

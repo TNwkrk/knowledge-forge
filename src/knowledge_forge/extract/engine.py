@@ -4,7 +4,11 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
+from datetime import UTC, datetime
+from hashlib import sha256
 from pathlib import Path
+from shutil import rmtree
+from tempfile import mkdtemp
 from typing import TypeAlias
 
 from yaml import safe_load
@@ -92,6 +96,37 @@ class ExtractionReviewFlag:
     errors: list[str]
 
 
+@dataclass(frozen=True)
+class ExtractionFingerprint:
+    """Reusable fingerprint for one section/record-type work item."""
+
+    doc_id: str
+    section_id: str
+    section_content_hash: str
+    prompt_template: str
+    prompt_version: str
+    schema_name: str
+    schema_version: str
+    model: str
+
+
+@dataclass(frozen=True)
+class ExtractionWorkItemResult:
+    """Execution result for one section/record-type work item."""
+
+    doc_id: str
+    section_id: str
+    record_type: str
+    status: str
+    fingerprint: ExtractionFingerprint
+    records: list[ExtractedRecord]
+    record_ids: list[str]
+    errors: list[str]
+    review_flag: ExtractionReviewFlag | None
+    repair_attempts: int
+    output_paths: list[Path]
+
+
 def extract_document(
     doc_id: str,
     *,
@@ -167,84 +202,140 @@ def extract_section(
         else load_bucket_context(section.doc_id, data_dir=resolved_data_dir)
     )
     for record_type in resolved_record_types:
-        template = load_prompt_template(record_type)
-        if template.schema_ref != record_type:
-            raise ValueError(
-                f"prompt template schema_ref mismatch for record_type '{record_type}': got '{template.schema_ref}'"
-            )
-        schema = _record_list_schema(record_type)
-        prompt = render_prompt(template, section=section, record_type=record_type)
-        model = template.model or client.config.extraction_model
-        attempt, failed_errors, failed_attempts = _extract_with_repair(
+        result = execute_work_item(
             section=section,
             record_type=record_type,
-            prompt=prompt,
-            template=template,
-            model=model,
-            schema=schema,
             client=client,
-            max_repair_attempts=max_repair_attempts,
-        )
-        if attempt is None:
-            save_review_flag(
-                ExtractionReviewFlag(
-                    doc_id=section.doc_id,
-                    section_id=section.section_id,
-                    record_type=record_type,
-                    reasons=["repair_failed"],
-                    min_confidence=min_confidence,
-                    record_ids=[],
-                    record_confidences=[],
-                    repair_attempts=failed_attempts,
-                    errors=failed_errors,
-                ),
-                data_dir=resolved_data_dir,
-            )
-            continue
-
-        records = _parse_records(attempt.parsed_json, record_type=record_type)
-        scored_records = apply_confidence_scores(
-            records,
-            validation=attempt.validation,
-            repaired=attempt.repaired,
-            section_quality=section_quality,
-            output_tokens=attempt.output_tokens,
-            max_output_tokens=client.config.max_tokens,
-        )
-        records_with_provenance = [
-            attach_provenance(
-                record,
-                section,
-                resolved_parse_meta,
-                ExtractionMetadata(
-                    model=model,
-                    prompt_template=f"extraction/{record_type}",
-                    prompt_version=template.version,
-                    confidence=record.confidence,
-                    bucket_context=resolved_bucket_context,
-                ),
-            )
-            for record in scored_records
-        ]
-        review_flag = build_review_flag(
-            section=section,
-            record_type=record_type,
-            records=records_with_provenance,
-            min_confidence=min_confidence,
-            repair_attempts=attempt.repair_attempts,
-            errors=attempt.repair_errors,
-        )
-        if review_flag is not None:
-            save_review_flag(review_flag, data_dir=resolved_data_dir)
-        save_records(
-            section=section,
-            record_type=record_type,
-            records=records_with_provenance,
             data_dir=resolved_data_dir,
+            max_repair_attempts=max_repair_attempts,
+            section_quality=section_quality,
+            min_confidence=min_confidence,
+            parse_meta=resolved_parse_meta,
+            bucket_context=resolved_bucket_context,
         )
-        extracted.extend(records_with_provenance)
+        extracted.extend(result.records)
 
     return extracted
+
+
+def execute_work_item(
+    *,
+    section: Section,
+    record_type: str,
+    client: InferenceClient,
+    data_dir: Path,
+    max_repair_attempts: int,
+    section_quality: float,
+    min_confidence: float,
+    parse_meta: ParseMetadata,
+    bucket_context: list[BucketContext],
+    pipeline_run_id: str | None = None,
+) -> ExtractionWorkItemResult:
+    """Execute one section/record-type extraction unit and persist safe outputs."""
+    template = load_prompt_template(record_type)
+    if template.schema_ref != record_type:
+        raise ValueError(
+            f"prompt template schema_ref mismatch for record_type '{record_type}': got '{template.schema_ref}'"
+        )
+    schema = _record_list_schema(record_type)
+    prompt = render_prompt(template, section=section, record_type=record_type)
+    model = template.model or client.config.extraction_model
+    fingerprint = build_extraction_fingerprint(
+        section=section,
+        record_type=record_type,
+        model=model,
+        prompt_template=template,
+    )
+    attempt, failed_errors, failed_attempts = _extract_with_repair(
+        section=section,
+        record_type=record_type,
+        prompt=prompt,
+        template=template,
+        model=model,
+        schema=schema,
+        client=client,
+        max_repair_attempts=max_repair_attempts,
+        pipeline_run_id=pipeline_run_id,
+    )
+    if attempt is None:
+        review_flag = ExtractionReviewFlag(
+            doc_id=section.doc_id,
+            section_id=section.section_id,
+            record_type=record_type,
+            reasons=["repair_failed"],
+            min_confidence=min_confidence,
+            record_ids=[],
+            record_confidences=[],
+            repair_attempts=failed_attempts,
+            errors=failed_errors,
+        )
+        save_review_flag(review_flag, data_dir=data_dir)
+        return ExtractionWorkItemResult(
+            doc_id=section.doc_id,
+            section_id=section.section_id,
+            record_type=record_type,
+            status="failed",
+            fingerprint=fingerprint,
+            records=[],
+            record_ids=[],
+            errors=failed_errors,
+            review_flag=review_flag,
+            repair_attempts=failed_attempts,
+            output_paths=[],
+        )
+
+    records = _parse_records(attempt.parsed_json, record_type=record_type)
+    scored_records = apply_confidence_scores(
+        records,
+        validation=attempt.validation,
+        repaired=attempt.repaired,
+        section_quality=section_quality,
+        output_tokens=attempt.output_tokens,
+        max_output_tokens=client.config.max_tokens,
+    )
+    records_with_provenance = [
+        attach_provenance(
+            record,
+            section,
+            parse_meta,
+            ExtractionMetadata(
+                model=model,
+                prompt_template=f"extraction/{record_type}",
+                prompt_version=template.version,
+                confidence=record.confidence,
+                bucket_context=bucket_context,
+            ),
+        )
+        for record in scored_records
+    ]
+    review_flag = build_review_flag(
+        section=section,
+        record_type=record_type,
+        records=records_with_provenance,
+        min_confidence=min_confidence,
+        repair_attempts=attempt.repair_attempts,
+        errors=attempt.repair_errors,
+    )
+    output_paths = save_records(
+        section=section,
+        record_type=record_type,
+        records=records_with_provenance,
+        data_dir=data_dir,
+    )
+    sync_review_flag(review_flag, section=section, record_type=record_type, data_dir=data_dir)
+    return ExtractionWorkItemResult(
+        doc_id=section.doc_id,
+        section_id=section.section_id,
+        record_type=record_type,
+        status="succeeded",
+        fingerprint=fingerprint,
+        records=records_with_provenance,
+        record_ids=[path.stem for path in output_paths],
+        errors=[],
+        review_flag=review_flag,
+        repair_attempts=attempt.repair_attempts,
+        output_paths=output_paths,
+    )
 
 
 def load_sections(doc_id: str, *, data_dir: Path | None = None) -> list[Section]:
@@ -314,13 +405,33 @@ def save_records(
     target_dir = data_dir / "extracted" / section.doc_id / record_type
     target_dir.mkdir(parents=True, exist_ok=True)
 
+    stage_root = Path(mkdtemp(prefix=f"{section.section_id}-{record_type}-", dir=target_dir.parent))
     written_paths: list[Path] = []
-    for index, record in enumerate(records, start=1):
-        validate_record_provenance(record)
-        record_id = build_record_id(section.section_id, record_type, index)
-        output_path = target_dir / f"{record_id}.json"
-        output_path.write_text(record.model_dump_json(indent=2), encoding="utf-8")
-        written_paths.append(output_path)
+    staged_paths: list[tuple[Path, Path]] = []
+    try:
+        for index, record in enumerate(records, start=1):
+            validate_record_provenance(record)
+            record_id = build_record_id(section.section_id, record_type, index)
+            output_path = target_dir / f"{record_id}.json"
+            staged_path = stage_root / output_path.name
+            staged_path.write_text(record.model_dump_json(indent=2), encoding="utf-8")
+            staged_paths.append((staged_path, output_path))
+            written_paths.append(output_path)
+
+        for staged_path, output_path in staged_paths:
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            staged_path.replace(output_path)
+
+        expected_names = {path.name for path in written_paths}
+        stale_paths = [
+            path
+            for path in target_dir.glob(f"{section.section_id}--{record_type}--*.json")
+            if path.name not in expected_names
+        ]
+        for stale_path in stale_paths:
+            stale_path.unlink()
+    finally:
+        rmtree(stage_root, ignore_errors=True)
 
     return written_paths
 
@@ -415,6 +526,33 @@ def save_review_flag(flag: ExtractionReviewFlag, *, data_dir: Path) -> Path:
     return output_path
 
 
+def sync_review_flag(
+    flag: ExtractionReviewFlag | None,
+    *,
+    section: Section,
+    record_type: str,
+    data_dir: Path,
+) -> Path | None:
+    """Replace or remove the active review flag for one section/record-type."""
+    review_dir = data_dir / "extracted" / section.doc_id / "reviews"
+    review_dir.mkdir(parents=True, exist_ok=True)
+    output_path = review_dir / f"{section.section_id}--{record_type}.json"
+
+    if flag is None:
+        if output_path.exists():
+            output_path.unlink()
+        return None
+
+    stage_dir = Path(mkdtemp(prefix=f"{section.section_id}-{record_type}-review-", dir=review_dir))
+    staged_path = stage_dir / output_path.name
+    try:
+        staged_path.write_text(json.dumps(flag.__dict__, indent=2), encoding="utf-8")
+        staged_path.replace(output_path)
+        return output_path
+    finally:
+        rmtree(stage_dir, ignore_errors=True)
+
+
 def _record_list_schema(record_type: str) -> dict[str, object]:
     record_schema = get_json_schema(record_type)
     return {
@@ -440,6 +578,7 @@ def _extract_with_repair(
     schema: dict[str, object],
     client: InferenceClient,
     max_repair_attempts: int,
+    pipeline_run_id: str | None = None,
 ) -> tuple[ExtractionAttempt | None, list[str], int]:
     """Return ``(attempt, errors, repair_attempts)``; attempt is None on irrecoverable failure."""
     prompt_template = f"extraction/{record_type}"
@@ -452,6 +591,7 @@ def _extract_with_repair(
             prompt_template=prompt_template,
             source_doc_id=section.doc_id,
             source_section_id=section.section_id,
+            pipeline_run_id=pipeline_run_id,
         )
         return (
             ExtractionAttempt(
@@ -477,6 +617,7 @@ def _extract_with_repair(
             source_doc_id=section.doc_id,
             source_section_id=section.section_id,
             max_attempts=max_repair_attempts,
+            pipeline_run_id=pipeline_run_id,
         )
         if not repair.valid or repair.repaired_json is None:
             return (None, repair.errors, repair.attempts)
@@ -517,3 +658,62 @@ def _maybe_mark_manifest_extracted(doc_id: str, *, data_dir: Path) -> None:
 
     updated = manifest.transition_status(DocumentStatus.EXTRACTED, reason="structured extraction complete")
     manifest_path.write_text(updated.to_yaml(), encoding="utf-8")
+
+
+def build_extraction_fingerprint(
+    *,
+    section: Section,
+    record_type: str,
+    model: str,
+    prompt_template: PromptTemplate | None = None,
+) -> ExtractionFingerprint:
+    """Build the durable fingerprint for one section/record-type work item."""
+    template = prompt_template or load_prompt_template(record_type)
+    schema_version = build_schema_version(record_type)
+    prompt_input_payload = {
+        "section": {
+            "doc_id": section.doc_id,
+            "section_id": section.section_id,
+            "content": section.content,
+            "title": getattr(section, "title", None),
+            "heading_path": getattr(section, "heading_path", None),
+            "page_range": getattr(section, "page_range", None),
+            "section_type": getattr(section, "section_type", None),
+        },
+        "template": {
+            "system": template.system,
+            "user": template.user,
+            "schema_ref": template.schema_ref,
+            "version": template.version,
+        },
+    }
+    prompt_input_hash = sha256(
+        json.dumps(
+            prompt_input_payload,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
+        ).encode("utf-8")
+    ).hexdigest()
+    return ExtractionFingerprint(
+        doc_id=section.doc_id,
+        section_id=section.section_id,
+        section_content_hash=prompt_input_hash,
+        prompt_template=f"extraction/{record_type}",
+        prompt_version=template.version,
+        schema_name=template.schema_ref,
+        schema_version=schema_version,
+        model=model,
+    )
+
+
+def build_schema_version(record_type: str) -> str:
+    """Build a stable version string from the record schema content."""
+    payload = json.dumps(get_json_schema(record_type), sort_keys=True, separators=(",", ":"))
+    digest = sha256(payload.encode("utf-8")).hexdigest()[:12]
+    return f"{record_type}@{digest}"
+
+
+def utc_now() -> datetime:
+    """Return an aware UTC timestamp."""
+    return datetime.now(UTC)
