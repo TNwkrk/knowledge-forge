@@ -3,6 +3,7 @@
 from knowledge_forge.compile.contradiction_notes import (
     compile_all_contradiction_notes,
     render_contradiction_notes,
+    render_contradiction_review_report,
 )
 from knowledge_forge.compile.overview_pages import (
     compile_all_overviews,
@@ -21,6 +22,7 @@ __all__ = [
     "compile_bucket_topic_pages",
     "compile_family_overview",
     "compile_manufacturer_index",
+    "render_contradiction_review_report",
     "render_contradiction_notes",
     "compile_source_page",
     "compile_topic_page",

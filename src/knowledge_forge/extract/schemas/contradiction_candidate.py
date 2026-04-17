@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Literal
+
 from pydantic import Field, field_validator, model_validator
 
 from knowledge_forge.extract.schemas.base import ProvenancedRecord
@@ -10,6 +12,8 @@ from knowledge_forge.extract.schemas.supersession_assessment import (
     SupersessionRecordMetadata,
 )
 
+REVIEW_STATUS_VALUES = ("unreviewed", "approved", "rejected", "deferred")
+
 
 class ContradictionCandidate(ProvenancedRecord):
     """A candidate contradiction between two extracted records."""
@@ -17,7 +21,7 @@ class ContradictionCandidate(ProvenancedRecord):
     record_ids: list[str] = Field(min_length=2, max_length=2)
     conflicting_claim: str = Field(min_length=1)
     rationale: str = Field(min_length=1)
-    review_status: str = Field(default="pending", min_length=1)
+    review_status: Literal["unreviewed", "approved", "rejected", "deferred"] = "unreviewed"
     compared_records: list[SupersessionRecordMetadata] = Field(min_length=2, max_length=2)
     supersession: SupersessionAssessment | None = None
 
@@ -32,7 +36,7 @@ class ContradictionCandidate(ProvenancedRecord):
             raise ValueError("record_ids must be distinct")
         return cleaned
 
-    @field_validator("conflicting_claim", "rationale", "review_status")
+    @field_validator("conflicting_claim", "rationale")
     @classmethod
     def validate_text(cls, value: str) -> str:
         """Trim contradiction fields."""

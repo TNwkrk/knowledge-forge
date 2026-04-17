@@ -176,7 +176,7 @@ VALID_PAYLOADS: dict[str, tuple[type[object], dict[str, object]]] = {
             "record_ids": ["dc1000--spec--001", "dc1000--spec--014"],
             "conflicting_claim": "Nominal supply voltage differs between two authoritative sources.",
             "rationale": "One manual states 24 VDC and a later bulletin states 48 VDC.",
-            "review_status": "pending",
+            "review_status": "unreviewed",
             "compared_records": [
                 {
                     "record_id": "dc1000--spec--001",
