@@ -6,13 +6,14 @@ import shutil
 import time
 from collections.abc import Iterable
 from dataclasses import dataclass
+from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
 import ocrmypdf
 from ocrmypdf.exceptions import MissingDependencyError
-from ocrmypdf.pdfinfo import PdfInfo
 from pdfminer.high_level import extract_text
+from pikepdf import Page, Pdf, parse_content_stream
 from pydantic import BaseModel, ConfigDict
 from yaml import safe_load
 
@@ -62,6 +63,16 @@ class NormalizationSettings:
     fast_text_detection_page_threshold: int = 25
 
 
+@dataclass(frozen=True)
+class PdfPageInspection:
+    """Lightweight page facts used to avoid OCRmyPDF's expensive content walk."""
+
+    width_inches: float
+    height_inches: float
+    has_text: bool
+    has_vector: bool
+
+
 def normalize_document(doc_id: str, *, data_dir: Path | None = None) -> NormalizationResult:
     """Run OCR normalization for a registered document."""
     resolved_data_dir = get_data_dir(data_dir)
@@ -81,9 +92,9 @@ def normalize_document(doc_id: str, *, data_dir: Path | None = None) -> Normaliz
 
     settings = _load_normalization_settings()
     start = time.perf_counter()
-    pdf_info = PdfInfo(raw_path)
-    page_count = len(pdf_info.pages)
-    page_analyses = _analyze_pages(raw_path, pdf_info, manifest.document.document_type, settings)
+    raw_pages = _inspect_pdf_pages(raw_path)
+    page_count = len(raw_pages)
+    page_analyses = _analyze_pages(raw_path, raw_pages, manifest.document.document_type, settings)
     pages_requiring_ocr = sum(1 for page in page_analyses if page["ocr_applied"])
     needs_ocr = pages_requiring_ocr > 0
 
@@ -108,7 +119,8 @@ def normalize_document(doc_id: str, *, data_dir: Path | None = None) -> Normaliz
         shutil.copy2(raw_path, output_path)
         ocr_completed = False
 
-    page_metadata = _build_page_metadata(output_path, page_analyses, settings)
+    normalized_pages = _inspect_pdf_pages(output_path) if ocr_completed else raw_pages
+    page_metadata = _build_page_metadata(output_path, page_analyses, normalized_pages, settings)
     pages_ocrd = sum(1 for page in page_metadata if page.ocr_applied)
 
     processing_time = time.perf_counter() - start
@@ -201,7 +213,7 @@ def inspect_normalization(doc_id: str, *, data_dir: Path | None = None) -> Norma
 
 def _analyze_pages(
     raw_path: Path,
-    pdf_info: PdfInfo,
+    page_inspections: list[PdfPageInspection],
     document_type: str,
     settings: NormalizationSettings,
 ) -> list[dict[str, Any]]:
@@ -210,13 +222,15 @@ def _analyze_pages(
         value.strip().casefold() for value in settings.bypass_document_types if value.strip()
     }
     analyses: list[dict[str, Any]] = []
-    for index, page in enumerate(pdf_info.pages, start=1):
-        has_text_before = bool(page and page.has_text)
-        has_vector = bool(page and page.has_vector)
-        if has_text_before and len(pdf_info.pages) >= settings.fast_text_detection_page_threshold:
+    page_count = len(page_inspections)
+    for index, page in enumerate(page_inspections, start=1):
+        if page.has_text and page_count >= settings.fast_text_detection_page_threshold:
             density_before = max(settings.text_density_threshold, settings.confidence_density_target)
+            has_text_before = True
         else:
             density_before = _extract_text_density(raw_path, index - 1, page)
+            has_text_before = page.has_text or density_before > 0
+        has_vector = page.has_vector
         bypass_reason: str | None = None
         ocr_applied = False
         if bypass_document_type:
@@ -241,13 +255,20 @@ def _analyze_pages(
 def _build_page_metadata(
     output_path: Path,
     page_analyses: list[dict[str, Any]],
+    normalized_pages: list[PdfPageInspection],
     settings: NormalizationSettings,
 ) -> list[PageNormalizationMetadata]:
     """Measure post-normalization text density and finalize page metadata."""
-    normalized_info = PdfInfo(output_path)
     metadata: list[PageNormalizationMetadata] = []
-    for analysis, page in zip(page_analyses, normalized_info.pages, strict=True):
-        density_after = _extract_text_density(output_path, analysis["page_number"] - 1, page)
+    large_output = len(normalized_pages) >= settings.fast_text_detection_page_threshold
+    for analysis, page in zip(page_analyses, normalized_pages, strict=True):
+        # Root cause for issue #83: OCRmyPDF's default PdfInfo page-content walk can wedge on
+        # vector-heavy manuals. Reuse the lightweight content scan here and only call pdfminer
+        # when we need an actual density measurement.
+        if large_output and page.has_text and not analysis["ocr_applied"]:
+            density_after = max(settings.text_density_threshold, settings.confidence_density_target)
+        else:
+            density_after = _extract_text_density(output_path, analysis["page_number"] - 1, page)
         metadata.append(
             PageNormalizationMetadata(
                 page_number=analysis["page_number"],
@@ -261,6 +282,40 @@ def _build_page_metadata(
             )
         )
     return metadata
+
+
+def _inspect_pdf_pages(pdf_path: Path) -> list[PdfPageInspection]:
+    """Collect page size plus fast text/vector markers without OCRmyPDF PdfInfo."""
+    with Pdf.open(pdf_path) as pdf:
+        return [_inspect_single_page(page) for page in pdf.pages]
+
+
+def _inspect_single_page(page: Page) -> PdfPageInspection:
+    """Inspect a single page by scanning its content operators."""
+    mediabox = [Decimal(value) for value in page.mediabox.as_list()]
+    width_inches = float((mediabox[2] - mediabox[0]) / Decimal(72))
+    height_inches = float((mediabox[3] - mediabox[1]) / Decimal(72))
+
+    has_text = False
+    has_vector = False
+    vector_ops = {"S", "s", "f", "F", "f*", "B", "B*", "b", "b*", "m", "l", "c", "v", "y", "h", "re"}
+    text_showing_ops = {"TJ", "Tj", "'", '"'}
+
+    for instruction in parse_content_stream(page):
+        operator = str(instruction.operator)
+        if operator in text_showing_ops:
+            has_text = True
+        elif operator in vector_ops:
+            has_vector = True
+        if has_text and has_vector:
+            break
+
+    return PdfPageInspection(
+        width_inches=max(width_inches, 1.0),
+        height_inches=max(height_inches, 1.0),
+        has_text=has_text,
+        has_vector=has_vector,
+    )
 
 
 def _extract_text_density(pdf_path: Path, page_index: int, page_info: Any) -> float:

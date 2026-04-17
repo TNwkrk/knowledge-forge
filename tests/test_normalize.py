@@ -200,12 +200,12 @@ def test_normalize_selects_only_low_density_pages_for_ocr(monkeypatch, tmp_path:
 
     def fake_density(pdf_path: Path, page_index: int, _: object) -> float:
         densities = {
-            ("mixed.pdf", 0): 2.4,
-            ("mixed.pdf", 1): 0.0,
-            (f"{doc_id}.pdf", 0): 2.4,
-            (f"{doc_id}.pdf", 1): 3.1,
+            ("raw", 0): 2.4,
+            ("raw", 1): 0.0,
+            ("normalized", 0): 2.4,
+            ("normalized", 1): 3.1,
         }
-        return densities[(pdf_path.name, page_index)]
+        return densities[(pdf_path.parent.name, page_index)]
 
     monkeypatch.setattr(ocrmypdf, "ocr", fake_ocr)
     monkeypatch.setattr("knowledge_forge.normalize.ocr._extract_text_density", fake_density)
@@ -308,10 +308,7 @@ def test_normalize_skips_expensive_density_pass_for_large_digital_docs(monkeypat
         width_inches = 8.5
         height_inches = 11.0
 
-    class _Info:
-        pages = [_Page() for _ in range(30)]
-
-    monkeypatch.setattr("knowledge_forge.normalize.ocr.PdfInfo", lambda _: _Info())
+    monkeypatch.setattr("knowledge_forge.normalize.ocr._inspect_pdf_pages", lambda _: [_Page() for _ in range(30)])
     calls: list[tuple[str, int]] = []
 
     def fake_density(pdf_path: Path, page_index: int, _page: object) -> float:
@@ -329,8 +326,30 @@ def test_normalize_skips_expensive_density_pass_for_large_digital_docs(monkeypat
 
     assert result.ocr_applied is False
     assert result.page_count == 30
-    assert len(calls) == 30
-    assert all(parent == "normalized" for parent, _ in calls)
+    assert calls == []
+
+
+def test_normalize_avoids_pdfinfo_content_stream_walk_regression(monkeypatch, tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    source = _build_digital_pdf(tmp_path / "digital.pdf")
+    doc_id = _register_fixture(source, data_dir)
+
+    monkeypatch.setattr(
+        "knowledge_forge.normalize.ocr.PdfInfo",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("PdfInfo should not be used for normalize")),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        ocrmypdf,
+        "ocr",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("OCR should be skipped for digital PDFs")),
+    )
+
+    result = normalize_document(doc_id, data_dir=data_dir)
+
+    assert result.ocr_applied is False
+    assert result.pages_ocrd == 0
+    assert result.page_metadata[0].has_text_before is True
 
 
 def test_normalize_cli_supports_doc_id_and_all(monkeypatch, tmp_path: Path) -> None:
