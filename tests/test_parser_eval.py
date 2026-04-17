@@ -23,7 +23,8 @@ def test_evaluate_parser_scores_committed_fixture_set() -> None:
     assert report.metrics.text_completeness == 100.0
     assert report.metrics.structure_fidelity == 100.0
     assert report.overall_score == 100.0
-    sop_report = next(fr for fr in report.fixture_reports if fr.fixture_id == "sop-checklist")
+    sop_report = next((fr for fr in report.fixture_reports if fr.fixture_id == "sop-checklist"), None)
+    assert sop_report is not None, "expected fixture 'sop-checklist' not found in report"
     assert "workflow" in sop_report.actual_section_types
 
 

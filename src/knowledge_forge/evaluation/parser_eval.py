@@ -83,7 +83,7 @@ class ParserEvalReport(BaseModel):
 def evaluate_parser(fixture_set: str, parser: str) -> ParserEvalReport:
     """Evaluate committed parser artifacts for one fixture set and parser lane."""
     fixture_root = _fixture_set_root(fixture_set)
-    repo_root = Path(__file__).resolve().parents[3]
+    repo_root = _repo_root()
     fixture_reports: list[ParserFixtureScore] = []
     parser_versions: list[str] = []
 
@@ -153,9 +153,18 @@ def evaluate_parser(fixture_set: str, parser: str) -> ParserEvalReport:
     )
 
 
+def _repo_root() -> Path:
+    """Return the repository root by walking up from this file's location."""
+    candidate = Path(__file__).resolve()
+    for parent in candidate.parents:
+        if (parent / "pyproject.toml").exists():
+            return parent
+    # Fallback: known depth relative to this file inside src/knowledge_forge/evaluation/
+    return candidate.parents[3]
+
+
 def _fixture_set_root(fixture_set: str) -> Path:
-    repo_root = Path(__file__).resolve().parents[3]
-    root = repo_root / "tests" / "fixtures" / "parser_eval" / slugify(fixture_set)
+    root = _repo_root() / "tests" / "fixtures" / "parser_eval" / slugify(fixture_set)
     if not root.exists():
         raise FileNotFoundError(f"parser eval fixture set not found: {root}")
     return root
