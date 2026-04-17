@@ -15,6 +15,7 @@ from knowledge_forge.compile import (
     compile_manufacturer_index,
     compile_source_page,
     compile_topic_page,
+    render_contradiction_notes,
 )
 from knowledge_forge.intake.importer import RegistrationRequest, load_manifest, register_document
 from knowledge_forge.intake.manifest import BucketAssignment, DocumentStatus
@@ -306,7 +307,9 @@ def test_compile_topic_page_renders_citations_applicability_notes_and_conflicts(
     bulletin_doc_id = _register_extracted_fixture(
         _write_pdf(tmp_path / "manual-bulletin.pdf"),
         data_dir,
-        revision="Bulletin 1",
+        document_type="SOP",
+        document_class="operational",
+        revision="Rev 3",
     )
     startup_section = f"{service_doc_id}--startup--001"
     startup_bulletin_section = f"{bulletin_doc_id}--startup--001"
@@ -356,7 +359,7 @@ def test_compile_topic_page_renders_citations_applicability_notes_and_conflicts(
                         service_doc_id, heading="Startup Procedure", start_page=18, end_page=18, confidence=0.9
                     ),
                     "step_number": 1,
-                    "instruction": "Verify the discharge valve is open.",
+                    "instruction": "Open the discharge valve before energizing the unit.",
                     "note": None,
                     "caution": None,
                     "figure_ref": None,
@@ -400,7 +403,7 @@ def test_compile_topic_page_renders_citations_applicability_notes_and_conflicts(
                         bulletin_doc_id, heading="Startup Procedure", start_page=21, end_page=21, confidence=0.94
                     ),
                     "step_number": 1,
-                    "instruction": "Close the bypass valve before energizing the unit.",
+                    "instruction": "Do not open the discharge valve before energizing the unit.",
                     "note": None,
                     "caution": None,
                     "figure_ref": None,
@@ -412,9 +415,9 @@ def test_compile_topic_page_renders_citations_applicability_notes_and_conflicts(
                 ),
                 "manufacturer": "Honeywell",
                 "family": "DC1000",
-                "models": ["DC1200"],
+                "models": ["DC1000", "DC1200"],
                 "serial_range": None,
-                "revision": "Bulletin 1",
+                "revision": "Rev 3",
             },
             "warnings": [],
             "tools_required": [],
@@ -458,17 +461,21 @@ def test_compile_topic_page_renders_citations_applicability_notes_and_conflicts(
     assert "topic: startup_procedure" in rendered_startup
     assert "## Draft Synthesis" in rendered_startup
     assert (
-        "Verify the discharge valve is open. [Source: honeywell-dc1000-service-manual-rev-3, p.18]" in rendered_startup
+        "Open the discharge valve before energizing the unit. "
+        "[Source: honeywell-dc1000-service-manual-rev-3, p.18]" in rendered_startup
     )
     assert (
-        "Close the bypass valve before energizing the unit. "
-        "[Source: honeywell-dc1000-service-manual-bulletin-1, p.21]" in rendered_startup
+        "Do not open the discharge valve before energizing the unit. "
+        "[Source: honeywell-dc1000-sop-rev-3, p.21]" in rendered_startup
     )
     assert "## Applicability Differences" in rendered_startup
     assert "models: DC1000" in rendered_startup
-    assert "models: DC1200" in rendered_startup
+    assert "models: DC1000, DC1200" in rendered_startup
     assert "## Potential Contradictions" in rendered_startup
-    assert "Conflicting claims for `start-the-controller`" in rendered_startup
+    assert "> [!WARNING] Contradiction" in rendered_startup
+    assert "(Service Manual, p.18, revised manual, level 2)" in rendered_startup
+    assert "(SOP, p.21, internal SOP or best practice, level 5)" in rendered_startup
+    assert "Recommended resolution: Prefer `honeywell-dc1000-service-manual-rev-3`" in rendered_startup
     assert client.calls[0]["prompt_template"] == "compilation/topic_page"
 
     specs_page = compile_topic_page(
@@ -478,10 +485,125 @@ def test_compile_topic_page_renders_citations_applicability_notes_and_conflicts(
         data_dir=data_dir,
     )
     rendered_specs = specs_page.render()
-    assert (
-        "Operating pressure: 15 PSI (startup mode) "
-        "[Source: honeywell-dc1000-service-manual-bulletin-1, pp.30-31]" in rendered_specs
+    assert "Operating pressure: 15 PSI (startup mode) [Source: honeywell-dc1000-sop-rev-3, pp.30-31]" in rendered_specs
+
+
+def test_render_contradiction_notes_generates_bucket_summary_page_and_cli(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    service_doc_id = _register_extracted_fixture(
+        _write_pdf(tmp_path / "manual-service.pdf"), data_dir, revision="Rev 3"
     )
+    sop_doc_id = _register_extracted_fixture(
+        _write_pdf(tmp_path / "manual-sop.pdf"),
+        data_dir,
+        document_type="SOP",
+        document_class="operational",
+        revision="Rev 3",
+    )
+    service_section = f"{service_doc_id}--startup--001"
+    sop_section = f"{sop_doc_id}--startup--001"
+    for doc_id, section_id, page_range in (
+        (service_doc_id, service_section, (18, 20)),
+        (sop_doc_id, sop_section, (21, 22)),
+    ):
+        _write_section(
+            data_dir,
+            doc_id,
+            section_id=section_id,
+            title="Startup Procedure",
+            section_type="startup",
+            page_range=page_range,
+        )
+    _write_record(
+        data_dir,
+        service_doc_id,
+        "procedure",
+        f"{service_section}--procedure--001",
+        {
+            **_base_record(
+                service_doc_id,
+                heading="Startup Procedure",
+                start_page=18,
+                end_page=20,
+                confidence=0.9,
+            ),
+            "title": "Start the controller",
+            "steps": [
+                {
+                    **_base_record(
+                        service_doc_id,
+                        heading="Startup Procedure",
+                        start_page=18,
+                        end_page=18,
+                        confidence=0.9,
+                    ),
+                    "step_number": 1,
+                    "instruction": "Open the discharge valve before energizing the unit.",
+                    "note": None,
+                    "caution": None,
+                    "figure_ref": None,
+                }
+            ],
+            "applicability": None,
+            "warnings": [],
+            "tools_required": [],
+        },
+    )
+    _write_record(
+        data_dir,
+        sop_doc_id,
+        "procedure",
+        f"{sop_section}--procedure--001",
+        {
+            **_base_record(
+                sop_doc_id,
+                heading="Startup Procedure",
+                start_page=21,
+                end_page=22,
+                confidence=0.92,
+            ),
+            "title": "Start the controller",
+            "steps": [
+                {
+                    **_base_record(
+                        sop_doc_id,
+                        heading="Startup Procedure",
+                        start_page=21,
+                        end_page=21,
+                        confidence=0.92,
+                    ),
+                    "step_number": 1,
+                    "instruction": "Do not open the discharge valve before energizing the unit.",
+                    "note": None,
+                    "caution": None,
+                    "figure_ref": None,
+                }
+            ],
+            "applicability": None,
+            "warnings": [],
+            "tools_required": [],
+        },
+    )
+
+    pages = render_contradiction_notes("honeywell/dc1000/family", data_dir=data_dir)
+    assert len(pages) == 1
+    page = pages[0]
+    rendered = page.render()
+
+    assert page.output_path == data_dir / "compiled" / "contradiction-notes" / "honeywell-dc1000-family.md"
+    assert "title: 'Contradiction Notes: honeywell/dc1000/family'" in rendered
+    assert "## Candidate 1: Start the controller step 1" in rendered
+    assert "(Service Manual, p.18, revised manual, level 2)" in rendered
+    assert "(SOP, p.21, internal SOP or best practice, level 5)" in rendered
+    assert "Recommended resolution: Prefer `honeywell-dc1000-service-manual-rev-3`" in rendered
+    assert "analysis_version: contradiction-analysis@v1" in rendered
+    assert "contradiction-analysis@v1" in rendered  # always in extraction_version
+
+    runner = CliRunner()
+    env = {"KNOWLEDGE_FORGE_DATA_DIR": str(data_dir)}
+    result = runner.invoke(cli, ["compile", "contradiction-notes", "honeywell/dc1000/family"], env=env)
+    assert result.exit_code == 0
+    assert "Compiled 1 contradiction note page(s) for honeywell/dc1000/family" in result.output
 
 
 def test_compile_bucket_topic_pages_and_cli_support_single_bucket_and_all(

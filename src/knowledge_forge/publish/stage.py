@@ -157,6 +157,10 @@ def _publish_relative_path(page: CompiledPage) -> Path:
         if directory is None:
             raise ValueError(f"unsupported topic page type '{topic}' for publish staging")
         return Path(directory) / f"{bucket_slug}-{slugify(topic)}.md"
+    if page_group == "contradiction-notes":
+        if len(compiled_relative.parts) < 2:
+            raise ValueError(f"compiled contradiction-notes page path is missing a filename: {page.output_path}")
+        return Path("analysis") / "contradiction-notes" / compiled_relative.parts[1]
     raise ValueError(f"unsupported compiled page group '{page_group}' for publish staging")
 
 

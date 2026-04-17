@@ -89,6 +89,7 @@ class ContradictionAnalysisReport:
     bucket_id: str
     contradictions: list[ContradictionCandidate]
     supersessions: list[SupersessionCandidate]
+    claims: list[ComparableClaim]
 
 
 def find_contradiction_candidates(
@@ -109,7 +110,7 @@ def analyze_contradictions(
 ) -> ContradictionAnalysisReport:
     """Analyze one bucket for contradiction and supersession candidates."""
     resolved_data_dir = get_data_dir(data_dir)
-    claims = _load_comparable_claims(bucket_id, data_dir=resolved_data_dir)
+    claims = load_comparable_claims(bucket_id, data_dir=resolved_data_dir)
 
     contradictions: list[ContradictionCandidate] = []
     supersessions: list[SupersessionCandidate] = []
@@ -138,10 +139,11 @@ def analyze_contradictions(
         bucket_id=bucket_id,
         contradictions=contradictions,
         supersessions=supersessions,
+        claims=claims,
     )
 
 
-def _load_comparable_claims(bucket_id: str, *, data_dir: Path) -> list[ComparableClaim]:
+def load_comparable_claims(bucket_id: str, *, data_dir: Path) -> list[ComparableClaim]:
     claims: list[ComparableClaim] = []
     for manifest in list_manifests(data_dir):
         if bucket_id not in {assignment.bucket_id for assignment in manifest.bucket_assignments}:

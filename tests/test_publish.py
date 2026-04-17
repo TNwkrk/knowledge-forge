@@ -190,6 +190,24 @@ def test_stage_publish_maps_compiled_pages_and_generates_publish_manifest(tmp_pa
     assert validate_publish_output(staged.stage_dir).valid is True
 
 
+def test_stage_publish_maps_contradiction_notes_to_analysis_subtree(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    contradiction_page = _compiled_page(
+        data_dir / "compiled" / "contradiction-notes" / "honeywell-dc1000-family.md",
+        doc_id="honeywell/dc1000/family",
+        frontmatter=_frontmatter(
+            title="Contradiction Notes: honeywell/dc1000/family",
+            bucket_id="honeywell/dc1000/family",
+        ),
+    )
+
+    staged = stage_publish("kf-20260416-002", [contradiction_page], data_dir=data_dir)
+
+    assert staged.files_written == ["analysis/contradiction-notes/honeywell-dc1000-family.md"]
+    assert (staged.publish_root / "analysis" / "contradiction-notes" / "honeywell-dc1000-family.md").exists()
+    assert validate_publish_output(staged.stage_dir).valid is True
+
+
 def test_generate_publish_manifest_returns_expected_contract_fields() -> None:
     manifest = generate_publish_manifest(
         "kf-20260416-001",

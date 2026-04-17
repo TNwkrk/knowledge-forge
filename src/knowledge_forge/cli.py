@@ -11,6 +11,7 @@ import click
 
 from knowledge_forge.bucketing.assigner import bucket_manifest, bucket_unassigned_manifests
 from knowledge_forge.compile import (
+    compile_all_contradiction_notes,
     compile_all_overviews,
     compile_all_source_pages,
     compile_all_topic_pages,
@@ -18,6 +19,7 @@ from knowledge_forge.compile import (
     compile_family_overview,
     compile_manufacturer_index,
     compile_source_page,
+    render_contradiction_notes,
 )
 from knowledge_forge.extract import analyze_contradictions, audit_document_provenance, extract_document
 from knowledge_forge.inference import InferenceClient, InferenceConfig, aggregate_costs, ingest_results, poll_batch
@@ -571,6 +573,40 @@ def compile_overviews(target: str | None, compile_all: bool, manufacturer_only: 
     descriptor = "manufacturer index" if manufacturer_only else "family overview"
     click.echo(f"Compiled {descriptor} for {target}")
     click.echo(f"Output: {page.output_path}")
+
+
+@compile.command("contradiction-notes")
+@click.argument("bucket_id", required=False, type=str)
+@click.option("--all", "compile_all", is_flag=True, help="Compile contradiction-note pages for every extracted bucket.")
+def compile_contradiction_notes(bucket_id: str | None, compile_all: bool) -> None:
+    """Compile standalone contradiction summary pages."""
+    if compile_all and bucket_id is not None:
+        raise click.ClickException("pass either a bucket_id or --all, not both")
+    if not compile_all and bucket_id is None:
+        raise click.ClickException("pass a bucket_id or use --all")
+
+    data_dir = get_data_dir()
+    if compile_all:
+        try:
+            pages = compile_all_contradiction_notes(data_dir=data_dir)
+        except (FileNotFoundError, ValueError, KeyError) as exc:
+            raise click.ClickException(str(exc)) from exc
+        if not pages:
+            click.echo("No extracted buckets found to compile.")
+            return
+        click.echo(f"Compiled {len(pages)} contradiction note page(s).")
+        for page in pages:
+            click.echo(f"{page.frontmatter['bucket_id']}\t{page.output_path}")
+        return
+
+    try:
+        pages = render_contradiction_notes(bucket_id, data_dir=data_dir)
+    except (FileNotFoundError, ValueError, KeyError) as exc:
+        raise click.ClickException(str(exc)) from exc
+
+    click.echo(f"Compiled {len(pages)} contradiction note page(s) for {bucket_id}")
+    for page in pages:
+        click.echo(f"{page.frontmatter['bucket_id']}\t{page.output_path}")
 
 
 @publish.command("validate")
