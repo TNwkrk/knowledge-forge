@@ -23,6 +23,7 @@ from knowledge_forge.compile import (
     render_contradiction_notes,
     render_contradiction_review_report,
 )
+from knowledge_forge.evaluation import evaluate_parser, write_parser_report
 from knowledge_forge.extract import (
     analyze_contradictions,
     audit_document_provenance,
@@ -71,6 +72,33 @@ def publish() -> None:
 @cli.group(help="Analyze extracted records for bucket-scoped contradictions and supersession.")
 def analyze() -> None:
     """Analysis command group."""
+
+
+@cli.group(help="Run lightweight benchmark evaluations against committed fixture sets.")
+def eval() -> None:
+    """Evaluation command group."""
+
+
+@eval.command("parser")
+@click.argument("fixture_set", type=str)
+@click.option("--parser", "parser_name", default="docling", show_default=True, help="Parser lane to evaluate.")
+def eval_parser(fixture_set: str, parser_name: str) -> None:
+    """Score parser artifacts against committed benchmark fixture ground truth."""
+    try:
+        report = evaluate_parser(fixture_set, parser_name)
+    except FileNotFoundError as exc:
+        raise click.ClickException(str(exc)) from exc
+
+    report_path = write_parser_report(report, output_dir=get_data_dir() / "evaluation" / "parser")
+    click.echo(f"Fixture set: {report.fixture_set}")
+    click.echo(f"Parser: {report.parser}")
+    click.echo(f"Parser versions: {', '.join(report.parser_versions)}")
+    click.echo(f"Overall score: {report.overall_score:.2f}")
+    click.echo(f"Heading accuracy: {report.metrics.heading_accuracy:.2f}")
+    click.echo(f"Table extraction accuracy: {report.metrics.table_extraction_accuracy:.2f}")
+    click.echo(f"Text completeness: {report.metrics.text_completeness:.2f}")
+    click.echo(f"Structure fidelity: {report.metrics.structure_fidelity:.2f}")
+    click.echo(f"Report: {report_path}")
 
 
 @intake.command("register")

@@ -1,0 +1,8 @@
+{
+  "doc_id": "sop-checklist",
+  "items": [
+    {"item_ref": "#/texts/0", "item_type": "text", "label": "title", "page_numbers": [1], "text": "Cooling Tower SOP"},
+    {"item_ref": "#/texts/1", "item_type": "text", "label": "section_header", "page_numbers": [1], "text": "Procedure"},
+    {"item_ref": "#/texts/2", "item_type": "text", "label": "text", "page_numbers": [1], "text": "1. Verify the basin level.\n2. Start the recirculation pump."}
+  ]
+}

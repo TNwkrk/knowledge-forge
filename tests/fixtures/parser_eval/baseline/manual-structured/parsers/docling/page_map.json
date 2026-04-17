@@ -1,0 +1,10 @@
+{
+  "doc_id": "manual-structured",
+  "items": [
+    {"item_ref": "#/texts/0", "item_type": "text", "label": "title", "page_numbers": [1], "text": "ACME Service Manual"},
+    {"item_ref": "#/texts/1", "item_type": "text", "label": "section_header", "page_numbers": [1], "text": "Safety"},
+    {"item_ref": "#/texts/2", "item_type": "text", "label": "text", "page_numbers": [1], "text": "Wear gloves before opening the panel."},
+    {"item_ref": "#/texts/3", "item_type": "text", "label": "section_header", "page_numbers": [2], "text": "Specifications"},
+    {"item_ref": "#/tables/0", "item_type": "table", "label": "table", "page_numbers": [2], "table_rows": 2}
+  ]
+}

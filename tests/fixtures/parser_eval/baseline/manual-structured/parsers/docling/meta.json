@@ -1,0 +1,19 @@
+{
+  "doc_id": "manual-structured",
+  "parser": "docling",
+  "parser_version": "test-docling-1.0",
+  "processed_at": "2026-04-16T00:00:00Z",
+  "processing_time_seconds": 0.15,
+  "page_count": 2,
+  "status": "success",
+  "input_path": "tests/fixtures/parser_eval/baseline/manual-structured/source.pdf",
+  "input_checksum": "1111111111111111111111111111111111111111111111111111111111111111",
+  "document_hash": "manual-structured",
+  "timings": {"total": 0.15},
+  "confidence": {"mean_score": 0.99},
+  "errors": [],
+  "fallback_parser": null,
+  "fallback_attempted": false,
+  "fallback_reason": null,
+  "candidate_runs": []
+}

@@ -1,0 +1,8 @@
+{
+  "doc_id": "scanned-ocr",
+  "items": [
+    {"item_ref": "#/texts/0", "item_type": "text", "label": "title", "page_numbers": [1], "text": "Field Notes"},
+    {"item_ref": "#/texts/1", "item_type": "text", "label": "section_header", "page_numbers": [1], "text": "Troubleshooting"},
+    {"item_ref": "#/texts/2", "item_type": "text", "label": "text", "page_numbers": [1], "text": "Check alarm relay wiring.\nReplace the fuse if open."}
+  ]
+}

@@ -1,0 +1,19 @@
+{
+  "doc_id": "scanned-ocr",
+  "parser": "docling",
+  "parser_version": "test-docling-1.0",
+  "processed_at": "2026-04-16T00:00:00Z",
+  "processing_time_seconds": 0.32,
+  "page_count": 1,
+  "status": "success",
+  "input_path": "tests/fixtures/parser_eval/baseline/scanned-ocr/source.pdf",
+  "input_checksum": "2222222222222222222222222222222222222222222222222222222222222222",
+  "document_hash": "scanned-ocr",
+  "timings": {"total": 0.32},
+  "confidence": {"mean_score": 0.94},
+  "errors": [],
+  "fallback_parser": null,
+  "fallback_attempted": false,
+  "fallback_reason": null,
+  "candidate_runs": []
+}
