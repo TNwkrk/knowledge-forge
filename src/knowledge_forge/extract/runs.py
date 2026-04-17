@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections import Counter
 from datetime import date, datetime
 from enum import Enum
+from functools import lru_cache
 from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -390,8 +391,13 @@ def _rebuild_item_fingerprint(
     )
 
 
+@lru_cache(maxsize=None)
+def _load_sections_by_id(doc_id: str, data_dir: Path) -> dict[str, Section]:
+    return {section.section_id: section for section in load_sections(doc_id, data_dir=data_dir)}
+
+
 def _load_section(doc_id: str, section_id: str, *, data_dir: Path) -> Section:
-    sections = {section.section_id: section for section in load_sections(doc_id, data_dir=data_dir)}
+    sections = _load_sections_by_id(doc_id, data_dir)
     try:
         return sections[section_id]
     except KeyError as exc:
