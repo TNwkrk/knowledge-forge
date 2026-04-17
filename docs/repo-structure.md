@@ -202,6 +202,9 @@ knowledge-forge/
     │   ├── topic-pages/
     │   ├── overview-pages/
     │   └── contradiction-notes/
+    │       ├── {bucket_slug}.md
+    │       ├── {bucket_slug}-review.md
+    │       └── {bucket_slug}-review-status.json
     ├── publish/                     # staged publish output
     │   └── {publish_run_id}/
     ├── inference_logs/              # inference request logs

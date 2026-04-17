@@ -360,7 +360,7 @@ def _build_contradiction_candidate(
             f"{secondary.doc_id} claims '{secondary.claim_text}'. "
             f"Both apply to overlapping records in bucket {bucket_id}."
         ),
-        review_status="pending",
+        review_status="unreviewed",
         compared_records=[left_meta, right_meta],
     )
     return candidate.model_copy(update={"supersession": assess_supersession(candidate)})

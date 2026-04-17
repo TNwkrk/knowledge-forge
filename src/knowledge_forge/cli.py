@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import subprocess
 import urllib.error
 from datetime import date
@@ -20,6 +21,7 @@ from knowledge_forge.compile import (
     compile_manufacturer_index,
     compile_source_page,
     render_contradiction_notes,
+    render_contradiction_review_report,
 )
 from knowledge_forge.extract import (
     analyze_contradictions,
@@ -805,6 +807,21 @@ def analyze_supersession_command(bucket_id: str, config_path: Path | None) -> No
                 f"{assessment.superseding_record_id}\t{assessment.superseded_record_id}\t"
                 f"{assessment.confidence}\t{assessment.precedence_rule_applied}"
             )
+
+
+@analyze.command("review")
+@click.argument("bucket_id", type=str)
+def analyze_review_command(bucket_id: str) -> None:
+    """Generate the contradiction review report and decision sidecar for one bucket."""
+    try:
+        artifacts = render_contradiction_review_report(bucket_id, data_dir=get_data_dir())
+    except (FileNotFoundError, ValueError, KeyError, json.JSONDecodeError) as exc:
+        raise click.ClickException(str(exc)) from exc
+
+    click.echo(f"Bucket: {bucket_id}")
+    click.echo(f"Review report: {artifacts.report_path}")
+    click.echo(f"Review decisions: {artifacts.decision_path}")
+    click.echo(f"Candidates: {len(artifacts.decisions)}")
 
 
 @inference.command("costs")

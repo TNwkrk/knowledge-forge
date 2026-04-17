@@ -9,6 +9,7 @@ from pathlib import Path
 from click.testing import CliRunner
 
 from knowledge_forge.cli import cli
+from knowledge_forge.compile import render_contradiction_review_report
 from knowledge_forge.extract import (
     analyze_contradictions,
     find_contradiction_candidates,
@@ -303,7 +304,7 @@ def test_analyze_contradictions_builds_cross_document_type_supersession_candidat
     assert len(report.contradictions) == 1
     contradiction = report.contradictions[0]
     assert contradiction.record_ids == ["startup-001::step-001", "startup-002::step-001"]
-    assert contradiction.review_status == "pending"
+    assert contradiction.review_status == "unreviewed"
     assert "Service Manual" in contradiction.conflicting_claim
     assert "SOP" in contradiction.conflicting_claim
 
@@ -491,6 +492,196 @@ def test_analyze_contradictions_cli_reports_candidates_and_supersession(tmp_path
     assert "CONTRADICTIONS" in result.output
     assert "SUPERSESSIONS" in result.output
     assert "\thigh\t" in result.output
+
+
+def test_render_contradiction_review_report_writes_markdown_and_decision_template(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    bucket_id = "honeywell/dc1000/family"
+    bulletin_doc_id = _register_fixture_doc(
+        _write_pdf(tmp_path / "bulletin.pdf"),
+        data_dir,
+        document_type="Service Bulletin",
+        document_class="authoritative-technical",
+        revision="Rev A",
+    )
+    addendum_doc_id = _register_fixture_doc(
+        _write_pdf(tmp_path / "addendum.pdf"),
+        data_dir,
+        document_type="Addendum",
+        document_class="authoritative-technical",
+        revision="Rev A",
+    )
+
+    for doc_id, document_type, text in (
+        (bulletin_doc_id, "Service Bulletin", "Torque the terminal lugs to 14 N m."),
+        (addendum_doc_id, "Addendum", "Torque the terminal lugs to 12 N m."),
+    ):
+        _write_record(
+            data_dir,
+            doc_id,
+            "warning",
+            f"warning-{slugify(document_type)}",
+            {
+                **_base_payload(doc_id, heading="Electrical Notice", start_page=2, end_page=2, bucket_id=bucket_id),
+                "severity": "warning",
+                "text": text,
+                "context": "Terminal lugs",
+                "applicability": _applicability_payload(doc_id, bucket_id),
+            },
+        )
+
+    artifacts = render_contradiction_review_report(bucket_id, data_dir=data_dir)
+
+    assert artifacts.report_path == data_dir / "compiled" / "contradiction-notes" / "honeywell-dc1000-family-review.md"
+    assert (
+        artifacts.decision_path
+        == data_dir / "compiled" / "contradiction-notes" / "honeywell-dc1000-family-review-status.json"
+    )
+    report_text = artifacts.report_path.read_text(encoding="utf-8")
+    assert "Service Bulletin" in report_text
+    assert "Addendum" in report_text
+    assert "Review status: `unreviewed`" in report_text
+    assert "p.2" in report_text
+    assert "Review Required" in report_text
+    assert "same precedence tier" in report_text
+
+    decision_payload = json.loads(artifacts.decision_path.read_text(encoding="utf-8"))
+    assert decision_payload["bucket_id"] == bucket_id
+    assert decision_payload["candidates"][0]["review_status"] == "unreviewed"
+
+
+def test_render_contradiction_review_report_preserves_saved_decisions(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    bucket_id = "honeywell/dc1000/family"
+    manual_doc_id = _register_fixture_doc(
+        _write_pdf(tmp_path / "manual.pdf"),
+        data_dir,
+        document_type="Service Manual",
+        document_class="authoritative-technical",
+        revision="Rev 3",
+    )
+    sop_doc_id = _register_fixture_doc(
+        _write_pdf(tmp_path / "sop.pdf"),
+        data_dir,
+        document_type="SOP",
+        document_class="operational",
+        revision="Current",
+    )
+
+    for doc_id, instruction in (
+        (manual_doc_id, "Open the discharge valve before energizing the motor."),
+        (sop_doc_id, "Keep the discharge valve closed before energizing the motor."),
+    ):
+        _write_record(
+            data_dir,
+            doc_id,
+            "procedure",
+            f"startup-{doc_id[-4:]}",
+            {
+                **_base_payload(doc_id, heading="Startup Procedure", start_page=4, end_page=4, bucket_id=bucket_id),
+                "title": "Prime the pump",
+                "steps": [
+                    {
+                        **_base_payload(
+                            doc_id,
+                            heading="Startup Procedure",
+                            start_page=4,
+                            end_page=4,
+                            bucket_id=bucket_id,
+                        ),
+                        "step_number": 1,
+                        "instruction": instruction,
+                        "note": None,
+                        "caution": None,
+                        "figure_ref": None,
+                    }
+                ],
+                "applicability": _applicability_payload(doc_id, bucket_id),
+                "warnings": [],
+                "tools_required": [],
+            },
+        )
+
+    first_artifacts = render_contradiction_review_report(bucket_id, data_dir=data_dir)
+    decision_payload = json.loads(first_artifacts.decision_path.read_text(encoding="utf-8"))
+    decision_payload["candidates"][0]["review_status"] = "approved"
+    decision_payload["candidates"][0]["reviewer"] = "Taylor"
+    decision_payload["candidates"][0]["reviewed_at"] = "2026-04-16T12:00:00Z"
+    decision_payload["candidates"][0]["notes"] = "Service manual takes precedence."
+    first_artifacts.decision_path.write_text(json.dumps(decision_payload, indent=2), encoding="utf-8")
+
+    second_artifacts = render_contradiction_review_report(bucket_id, data_dir=data_dir)
+    report_text = second_artifacts.report_path.read_text(encoding="utf-8")
+
+    assert "Review status: `approved`" in report_text
+    assert "Reviewer: Taylor" in report_text
+    assert "Service manual takes precedence." in report_text
+
+
+def test_analyze_review_cli_generates_review_report(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    bucket_id = "honeywell/dc1000/family"
+    manual_doc_id = _register_fixture_doc(
+        _write_pdf(tmp_path / "manual.pdf"),
+        data_dir,
+        document_type="Service Manual",
+        document_class="authoritative-technical",
+        revision="Rev 3",
+    )
+    sop_doc_id = _register_fixture_doc(
+        _write_pdf(tmp_path / "sop.pdf"),
+        data_dir,
+        document_type="SOP",
+        document_class="operational",
+        revision="Current",
+    )
+
+    for doc_id, instruction in (
+        (manual_doc_id, "Open the discharge valve before energizing the motor."),
+        (sop_doc_id, "Keep the discharge valve closed before energizing the motor."),
+    ):
+        _write_record(
+            data_dir,
+            doc_id,
+            "procedure",
+            f"startup-{doc_id[-4:]}",
+            {
+                **_base_payload(doc_id, heading="Startup Procedure", start_page=4, end_page=4, bucket_id=bucket_id),
+                "title": "Prime the pump",
+                "steps": [
+                    {
+                        **_base_payload(
+                            doc_id,
+                            heading="Startup Procedure",
+                            start_page=4,
+                            end_page=4,
+                            bucket_id=bucket_id,
+                        ),
+                        "step_number": 1,
+                        "instruction": instruction,
+                        "note": None,
+                        "caution": None,
+                        "figure_ref": None,
+                    }
+                ],
+                "applicability": _applicability_payload(doc_id, bucket_id),
+                "warnings": [],
+                "tools_required": [],
+            },
+        )
+
+    runner = CliRunner()
+    result = runner.invoke(
+        cli,
+        ["analyze", "review", bucket_id],
+        env={"KNOWLEDGE_FORGE_DATA_DIR": str(data_dir)},
+    )
+
+    assert result.exit_code == 0
+    assert f"Bucket: {bucket_id}" in result.output
+    assert "Review report:" in result.output
+    assert "Review decisions:" in result.output
+    assert "Candidates: 1" in result.output
 
 
 def test_find_supersession_assessments_uses_publication_date_when_revisions_are_equal(tmp_path: Path) -> None:
