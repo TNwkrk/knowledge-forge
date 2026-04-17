@@ -743,6 +743,149 @@ def test_section_document_headingless_sop_extracts_steps(tmp_path: Path) -> None
     assert [step.text for step in sections[0].ordered_steps] == ["Isolate power.", "Apply lockout tag."]
 
 
+def test_section_document_classifies_rockwell_style_admonitions_steps_and_short_config_titles(
+    tmp_path: Path,
+) -> None:
+    data_dir = tmp_path / "data"
+    doc_id = _register_parsed_fixture(
+        data_dir,
+        _write_pdf(tmp_path / "rockwell-patterns.pdf"),
+        revision="Rev Rockwell",
+        document_type="Operation Manual",
+    )
+    structure = {
+        "doc_id": doc_id,
+        "parser": "docling",
+        "parser_version": "test",
+        "page_count": 5,
+        "texts": [
+            {"item_ref": "#/texts/0", "label": "title", "text": "CompactLogix", "page_numbers": [1]},
+            {"item_ref": "#/texts/1", "label": "section_header", "text": "ATTENTION", "page_numbers": [1]},
+            {
+                "item_ref": "#/texts/2",
+                "label": "text",
+                "text": (
+                    "Only install a 1747-BA battery. If you install a different battery, you may damage the controller."
+                ),
+                "page_numbers": [1],
+            },
+            {"item_ref": "#/texts/3", "label": "section_header", "text": "1. Create a tag.", "page_numbers": [2]},
+            {
+                "item_ref": "#/texts/4",
+                "label": "text",
+                "text": "Define the controller tag in the project.",
+                "page_numbers": [2],
+            },
+            {
+                "item_ref": "#/texts/5",
+                "label": "section_header",
+                "text": "Adding a local I/O module",
+                "page_numbers": [3],
+            },
+            {
+                "item_ref": "#/texts/6",
+                "label": "text",
+                "text": "Create a new module and connect the bus.",
+                "page_numbers": [3],
+            },
+            {"item_ref": "#/texts/7", "label": "section_header", "text": "Backup Supervisor", "page_numbers": [4]},
+            {
+                "item_ref": "#/texts/8",
+                "label": "text",
+                "text": "Configure at least one backup ring supervisor for your ring network.",
+                "page_numbers": [4],
+            },
+            {"item_ref": "#/texts/9", "label": "section_header", "text": "Additional Resources", "page_numbers": [5]},
+            {
+                "item_ref": "#/texts/10",
+                "label": "text",
+                "text": "View or download related publications from Rockwell Automation.",
+                "page_numbers": [5],
+            },
+        ],
+        "tables": [],
+        "pages": [
+            {"page_number": 1, "width": 612, "height": 792, "source_ref": "p1"},
+            {"page_number": 2, "width": 612, "height": 792, "source_ref": "p2"},
+            {"page_number": 3, "width": 612, "height": 792, "source_ref": "p3"},
+            {"page_number": 4, "width": 612, "height": 792, "source_ref": "p4"},
+            {"page_number": 5, "width": 612, "height": 792, "source_ref": "p5"},
+        ],
+    }
+    headings = {
+        "doc_id": doc_id,
+        "headings": [
+            {
+                "title": "CompactLogix",
+                "label": "title",
+                "level": 1,
+                "page_number": 1,
+                "item_ref": "#/texts/0",
+                "children": [
+                    {
+                        "title": "ATTENTION",
+                        "label": "section_header",
+                        "level": 2,
+                        "page_number": 1,
+                        "item_ref": "#/texts/1",
+                        "children": [],
+                    },
+                    {
+                        "title": "1. Create a tag.",
+                        "label": "section_header",
+                        "level": 2,
+                        "page_number": 2,
+                        "item_ref": "#/texts/3",
+                        "children": [],
+                    },
+                    {
+                        "title": "Adding a local I/O module",
+                        "label": "section_header",
+                        "level": 2,
+                        "page_number": 3,
+                        "item_ref": "#/texts/5",
+                        "children": [],
+                    },
+                    {
+                        "title": "Backup Supervisor",
+                        "label": "section_header",
+                        "level": 2,
+                        "page_number": 4,
+                        "item_ref": "#/texts/7",
+                        "children": [],
+                    },
+                    {
+                        "title": "Additional Resources",
+                        "label": "section_header",
+                        "level": 2,
+                        "page_number": 5,
+                        "item_ref": "#/texts/9",
+                        "children": [],
+                    },
+                ],
+            }
+        ],
+    }
+    _write_parsed_artifacts(data_dir, doc_id=doc_id, structure=structure, headings=headings)
+
+    sections = section_document(doc_id, data_dir=data_dir)
+
+    assert [section.title for section in sections] == [
+        "ATTENTION",
+        "1. Create a tag.",
+        "Adding a local I/O module",
+        "Backup Supervisor",
+        "Additional Resources",
+    ]
+    assert [section.section_type for section in sections] == [
+        "safety",
+        "configuration",
+        "installation",
+        "configuration",
+        "other",
+    ]
+
+
 def test_section_cli_supports_doc_id_and_all(monkeypatch, tmp_path: Path) -> None:
     data_dir = tmp_path / "data"
     first_doc_id = _register_parsed_fixture(data_dir, _write_pdf(tmp_path / "first.pdf"))
