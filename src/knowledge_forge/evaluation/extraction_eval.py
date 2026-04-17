@@ -180,18 +180,23 @@ def _load_fixture_records(fixture_dir: Path) -> list[_ActualRecordArtifact]:
     if not extracted_dir.exists():
         raise FileNotFoundError(f"extracted fixture artifacts not found: {extracted_dir}")
 
+    repo_root = _repo_root()
     artifacts: list[_ActualRecordArtifact] = []
     for record_path in sorted(extracted_dir.glob("*/*.json")):
         record_type = record_path.parent.name
         payload = json.loads(record_path.read_text(encoding="utf-8"))
-        model = get_schema_model(record_type)
         try:
+            path_str = str(record_path.relative_to(repo_root))
+        except ValueError:
+            path_str = str(record_path)
+        try:
+            model = get_schema_model(record_type)
             record = model.model_validate(payload)
         except Exception:
             artifacts.append(
                 _ActualRecordArtifact(
                     record_type=record_type,
-                    path=str(record_path.relative_to(_repo_root())),
+                    path=path_str,
                     payload=payload,
                     schema_valid=False,
                     provenance_valid=False,
@@ -206,7 +211,7 @@ def _load_fixture_records(fixture_dir: Path) -> list[_ActualRecordArtifact]:
         artifacts.append(
             _ActualRecordArtifact(
                 record_type=record_type,
-                path=str(record_path.relative_to(_repo_root())),
+                path=path_str,
                 payload=payload,
                 schema_valid=True,
                 provenance_valid=provenance_valid,

@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
 from click.testing import CliRunner
 
 from knowledge_forge.cli import cli
@@ -48,3 +49,34 @@ def test_eval_extraction_cli_writes_report(tmp_path: Path) -> None:
     payload = json.loads(report_path.read_text(encoding="utf-8"))
     assert payload["fixture_set"] == "baseline"
     assert payload["extraction_versions"] == ["extraction/baseline@v1:test-model"]
+
+
+def test_evaluate_extraction_missing_fixture_set_raises() -> None:
+    with pytest.raises(FileNotFoundError, match="extraction eval fixture set not found"):
+        evaluate_extraction("does-not-exist")
+
+
+def test_evaluate_extraction_unknown_record_type_scores_as_invalid(tmp_path: Path) -> None:
+    """A JSON file under an unknown record type directory must not crash the harness."""
+    fixture_dir = tmp_path / "unknown-type-fixture"
+    extracted_dir = fixture_dir / "extracted" / "not_a_real_type"
+    extracted_dir.mkdir(parents=True)
+    (extracted_dir / "record-001.json").write_text(json.dumps({"field": "value"}), encoding="utf-8")
+    (fixture_dir / "ground_truth.json").write_text(
+        json.dumps(
+            {
+                "fixture_id": "unknown-type-fixture",
+                "title": "Unknown type test",
+                "source_pdf": "tests/fixtures/parser_eval/baseline/manual-structured/source.pdf",
+                "expected_records": {},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    from knowledge_forge.evaluation.extraction_eval import _load_fixture_records
+
+    artifacts = _load_fixture_records(fixture_dir)
+    assert len(artifacts) == 1
+    assert artifacts[0].schema_valid is False
+    assert artifacts[0].provenance_valid is False
