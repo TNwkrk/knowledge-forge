@@ -30,6 +30,37 @@ from knowledge_forge.inference import (
     validate_response,
 )
 from knowledge_forge.inference.logger import iter_log_entries
+from knowledge_forge.inference.openai_schema import prepare_openai_json_schema
+
+
+def test_prepare_openai_json_schema_requires_all_object_properties() -> None:
+    schema = {
+        "type": "object",
+        "properties": {
+            "required_name": {"type": "string"},
+            "optional_note": {"type": "string"},
+            "optional_meta": {
+                "type": "object",
+                "properties": {
+                    "enabled": {"type": "boolean"},
+                    "comment": {"type": "string"},
+                },
+                "required": ["enabled"],
+                "additionalProperties": False,
+            },
+        },
+        "required": ["required_name"],
+        "additionalProperties": False,
+    }
+
+    prepared = prepare_openai_json_schema(schema)
+
+    assert prepared["required"] == ["required_name", "optional_note", "optional_meta"]
+    assert prepared["properties"]["optional_note"]["type"] == ["string", "null"]
+    assert prepared["properties"]["optional_meta"]["type"] == ["object", "null"]
+    nested = prepared["properties"]["optional_meta"]
+    assert nested["required"] == ["enabled", "comment"]
+    assert nested["properties"]["comment"]["type"] == ["string", "null"]
 
 
 def test_inference_config_loads_yaml_with_env_overrides(tmp_path: Path) -> None:
@@ -302,7 +333,7 @@ def test_inference_client_validates_schema_bound_response(tmp_path: Path) -> Non
         "format": {
             "type": "json_schema",
             "name": "knowledge_forge_schema",
-            "schema": schema,
+            "schema": prepare_openai_json_schema(schema),
             "strict": True,
         }
     }
@@ -419,6 +450,14 @@ def test_batch_builder_writes_openai_batch_jsonl_with_multiple_requests(tmp_path
         {"role": "system", "content": "Return concise JSON."},
         {"role": "user", "content": "Summarize startup steps."},
     ]
+    assert first["body"]["text"]["format"]["schema"] == prepare_openai_json_schema(
+        {
+            "type": "object",
+            "properties": {"title": {"type": "string"}},
+            "required": ["title"],
+            "additionalProperties": False,
+        }
+    )
     assert first["body"]["text"] == {
         "format": {
             "type": "json_schema",

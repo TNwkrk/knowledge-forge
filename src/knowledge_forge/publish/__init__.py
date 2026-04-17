@@ -8,7 +8,7 @@ from knowledge_forge.publish.manifest import (
     load_publish_manifest,
 )
 from knowledge_forge.publish.pr import PRResult, create_publish_pr
-from knowledge_forge.publish.stage import StagedPublish, stage_publish
+from knowledge_forge.publish.stage import StagedPublish, load_compiled_pages, stage_publish
 from knowledge_forge.publish.validate import ValidationReport, validate_publish_output
 
 __all__ = [
@@ -19,6 +19,7 @@ __all__ = [
     "ValidationReport",
     "create_publish_pr",
     "generate_publish_manifest",
+    "load_compiled_pages",
     "list_publish_runs",
     "load_publish_manifest",
     "stage_publish",

@@ -190,6 +190,44 @@ def test_stage_publish_maps_compiled_pages_and_generates_publish_manifest(tmp_pa
     assert validate_publish_output(staged.stage_dir).valid is True
 
 
+def test_publish_stage_cli_loads_compiled_pages_from_disk(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    compiled_root = data_dir / "compiled" / "source-pages"
+    compiled_root.mkdir(parents=True, exist_ok=True)
+    compiled_page = compiled_root / "honeywell-dc1000-service-manual-rev-3.md"
+    compiled_page.write_text(
+        """---
+title: Source Manual
+generated_by: knowledge-forge
+publish_run: unpublished
+source_documents:
+  - doc_id: honeywell-dc1000-service-manual-rev-3
+    revision: Rev 3
+    manufacturer: Honeywell
+    family: DC1000
+generated_at: 2026-04-16T17:30:00Z
+extraction_version: extract-v1
+compilation_version: source-pages-v1
+doc_id: honeywell-dc1000-service-manual-rev-3
+---
+
+# Source Manual
+""",
+        encoding="utf-8",
+    )
+    runner = CliRunner()
+
+    result = runner.invoke(
+        cli,
+        ["publish", "stage", "kf-20260416-123"],
+        env={"KNOWLEDGE_FORGE_DATA_DIR": str(data_dir)},
+    )
+
+    assert result.exit_code == 0
+    assert "Files written: 1" in result.output
+    assert (data_dir / "publish" / "kf-20260416-123" / "repo-wiki" / "knowledge" / "source-index").exists()
+
+
 def test_stage_publish_maps_contradiction_notes_to_analysis_subtree(tmp_path: Path) -> None:
     data_dir = tmp_path / "data"
     contradiction_page = _compiled_page(
@@ -351,6 +389,38 @@ def test_validate_publish_output_rejects_invalid_structure_and_duplicate_identit
     assert any("filename must start with bucket slug" in error for error in report.errors)
     assert any("duplicate canonical identity" in error for error in report.errors)
     assert any("orphan removal not previously published" in error for error in report.errors)
+
+
+def test_validate_publish_output_accepts_curated_bucket_family_overview_slug(tmp_path: Path) -> None:
+    stage_dir = tmp_path / "data" / "publish" / "kf-20260416-006"
+    publish_root = stage_dir / "repo-wiki" / "knowledge"
+    source_doc = {
+        "doc_id": "rockwell-compactlogix-operation-manual-1769-um007d-en-p",
+        "revision": "1769-UM007D-EN-P",
+        "manufacturer": "Rockwell",
+        "family": "CompactLogix",
+    }
+
+    _write_markdown(
+        publish_root / "manufacturers" / "rockwell" / "pump-station-control-stack" / "_index.md",
+        _frontmatter(
+            source_documents=[source_doc],
+            bucket_id="rockwell/pump-station-control-stack/curated-bucket",
+            page_type="family_overview",
+            title="Rockwell Pump Station Control Stack Family Overview",
+        )
+        | {"family": "Pump Station Control Stack"},
+    )
+    _write_manifest(
+        stage_dir,
+        "kf-20260416-006",
+        files_written=["manufacturers/rockwell/pump-station-control-stack/_index.md"],
+    )
+
+    report = validate_publish_output(stage_dir)
+
+    assert report.valid is True
+    assert report.errors == []
 
 
 def test_publish_validate_cli_reports_success_and_failure(tmp_path: Path) -> None:

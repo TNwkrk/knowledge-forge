@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from copy import deepcopy
 from typing import TypeAlias
 
 from knowledge_forge.extract.schemas.alarm_definition import AlarmDefinition
@@ -44,6 +45,45 @@ SCHEMA_REGISTRY: dict[str, RecordSchema] = {
 
 JSON_SCHEMA_REGISTRY: dict[str, dict[str, object]] = {
     name: model.json_schema() for name, model in SCHEMA_REGISTRY.items()
+}
+
+
+def _resolve_local_refs(value: object, defs: dict[str, object]) -> object:
+    """Inline local ``#/$defs`` references for OpenAI json_schema compatibility."""
+    if isinstance(value, dict):
+        ref = value.get("$ref")
+        if isinstance(ref, str) and ref.startswith("#/$defs/"):
+            ref_name = ref.removeprefix("#/$defs/")
+            resolved = defs.get(ref_name)
+            if resolved is None:
+                raise KeyError(f"unknown schema ref '{ref}'")
+            merged = deepcopy(resolved)
+            siblings = {key: item for key, item in value.items() if key != "$ref"}
+            if siblings:
+                if isinstance(merged, dict):
+                    merged.update(_resolve_local_refs(siblings, defs))
+                else:
+                    raise TypeError(f"cannot merge sibling keys into non-object schema ref '{ref}'")
+            return _resolve_local_refs(merged, defs)
+        return {key: _resolve_local_refs(item, defs) for key, item in value.items() if key != "$defs"}
+    if isinstance(value, list):
+        return [_resolve_local_refs(item, defs) for item in value]
+    return value
+
+
+def _flatten_json_schema(schema: dict[str, object]) -> dict[str, object]:
+    """Return a schema without local ``$defs`` references."""
+    defs = schema.get("$defs", {})
+    if defs and not isinstance(defs, dict):
+        raise TypeError("$defs must be an object when present")
+    flattened = _resolve_local_refs(schema, defs if isinstance(defs, dict) else {})
+    if not isinstance(flattened, dict):
+        raise TypeError("flattened schema must be an object")
+    return flattened
+
+
+JSON_SCHEMA_REGISTRY = {
+    name: _flatten_json_schema(schema) for name, schema in JSON_SCHEMA_REGISTRY.items()
 }
 
 

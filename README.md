@@ -58,6 +58,11 @@ work can proceed without guessing repo conventions:
 The setup is intentionally light. Durable behavior lives in repo docs rather
 than hidden local automation.
 
+Source-pack manifests for real-corpus onboarding live under
+`config/source-packs/`. They define a reviewed document set plus the metadata
+needed to register a repeatable manufacturer bucket without hardcoding ad hoc
+one-off intake commands.
+
 ## Canonical entry points
 
 Start here when orienting in the repo:
@@ -206,6 +211,20 @@ Use it to:
 Do not treat local repo access as permission to casually edit FlowCommander from
 intermediate output. The approval boundary remains the FlowCommander PR review
 process.
+
+## First real bucket onboarding
+
+Phase 10 onboarding can now register a checked-in source pack through the CLI:
+
+```bash
+.venv/bin/python -m knowledge_forge.cli intake register-pack \
+  config/source-packs/rockwell-pump-station-control-stack.yaml
+```
+
+Curated source packs may intentionally span several product families while still
+rolling up into one manufacturer-scoped subsystem bucket. When that happens,
+manifests preserve the real document family and also carry a `curated_bucket`
+hint used only for bucket assignment and cross-source compilation.
 
 ## Goals
 

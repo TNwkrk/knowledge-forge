@@ -44,9 +44,17 @@ from knowledge_forge.intake.importer import (
     register_document,
 )
 from knowledge_forge.intake.manifest import CANONICAL_DOCUMENT_TYPE_VALUES, DOCUMENT_CLASS_VALUES
+from knowledge_forge.intake.source_packs import load_source_pack, register_source_pack
 from knowledge_forge.normalize import inspect_normalization, normalize_document
 from knowledge_forge.parse import parse_document, score_parse, section_document
-from knowledge_forge.publish import create_publish_pr, list_publish_runs, load_publish_manifest, validate_publish_output
+from knowledge_forge.publish import (
+    create_publish_pr,
+    list_publish_runs,
+    load_compiled_pages,
+    load_publish_manifest,
+    stage_publish,
+    validate_publish_output,
+)
 
 
 @click.group(help="Knowledge Forge command line interface.")
@@ -157,6 +165,7 @@ def eval_extraction(fixture_set: str) -> None:
 )
 @click.option("--language", type=str, help="Two-letter ISO 639-1 language code.")
 @click.option("--priority", type=click.IntRange(min=1), help="Processing priority where 1 is highest.")
+@click.option("--curated-bucket", type=str, help="Optional manufacturer-scoped curated bucket label.")
 def intake_register(
     pdf_path: Path,
     force: bool,
@@ -169,6 +178,7 @@ def intake_register(
     publication_date: object | None,
     language: str | None,
     priority: int | None,
+    curated_bucket: str | None,
 ) -> None:
     """Register a source document into the local manifest store."""
     if not pdf_path.suffix.casefold() == ".pdf":
@@ -185,6 +195,7 @@ def intake_register(
         publication_date=_coerce_publication_date(publication_date),
         language=language or click.prompt("Language", default="en", show_default=True),
         priority=priority if priority is not None else click.prompt("Priority", default=3, type=int, show_default=True),
+        curated_bucket=curated_bucket,
         force=force,
     )
 
@@ -203,6 +214,50 @@ def intake_register(
         f"Document already registered with checksum {result.manifest.document.checksum}: {result.manifest.doc_id}"
     )
     click.echo(f"Manifest: {result.manifest_path}")
+
+
+@intake.command("register-pack")
+@click.argument("manifest_path", type=click.Path(exists=True, dir_okay=False, path_type=Path))
+@click.option("--include-conditionals", is_flag=True, help="Register conditional companion documents too.")
+@click.option("--allow-missing", is_flag=True, help="Continue when listed pack files are missing on disk.")
+@click.option(
+    "--source-dir",
+    type=click.Path(exists=True, file_okay=False, dir_okay=True, path_type=Path),
+    help="Override the source directory declared in the source-pack manifest.",
+)
+@click.option("--force", is_flag=True, help="Force re-registration for already-seen checksums.")
+def intake_register_pack(
+    manifest_path: Path,
+    include_conditionals: bool,
+    allow_missing: bool,
+    source_dir: Path | None,
+    force: bool,
+) -> None:
+    """Register every selected document from a checked-in source-pack manifest."""
+    try:
+        pack = load_source_pack(manifest_path)
+        result = register_source_pack(
+            pack,
+            data_dir=get_data_dir(),
+            include_conditionals=include_conditionals,
+            allow_missing=allow_missing,
+            source_dir=source_dir,
+            force=force,
+        )
+    except (FileNotFoundError, ValueError) as exc:
+        raise click.ClickException(str(exc)) from exc
+
+    click.echo(f"Source pack: {pack.name}")
+    click.echo(f"Bucket: {pack.manufacturer} / {pack.bucket}")
+    click.echo(f"Registered: {len(result.registered)}")
+    for item in result.registered:
+        click.echo(f"{item.manifest.doc_id}\t{item.manifest_path}")
+    if result.skipped_conditionals:
+        click.echo(f"Skipped conditionals: {', '.join(result.skipped_conditionals)}")
+    if result.missing_files:
+        click.echo("Missing files:")
+        for path in result.missing_files:
+            click.echo(f"- {path}")
 
 
 @intake.command("list")
@@ -689,6 +744,30 @@ def publish_validate(publish_run_id: str) -> None:
         for error in report.errors:
             click.echo(f"- {error}")
         raise click.ClickException(f"publish validation failed for {publish_run_id}")
+
+
+@publish.command("stage")
+@click.argument("publish_run_id", type=str)
+@click.option(
+    "--compiled-root",
+    type=click.Path(file_okay=False, dir_okay=True, path_type=Path),
+    default=Path("compiled"),
+    show_default=True,
+    help="Compiled page root relative to the data dir, or an absolute path.",
+)
+def publish_stage_command(publish_run_id: str, compiled_root: Path) -> None:
+    """Stage compiled Markdown pages into a publish run directory."""
+    try:
+        compiled_pages = load_compiled_pages(compiled_root, data_dir=get_data_dir())
+        staged = stage_publish(publish_run_id, compiled_pages, data_dir=get_data_dir())
+    except (FileNotFoundError, ValueError) as exc:
+        raise click.ClickException(str(exc)) from exc
+
+    click.echo(f"Publish run: {staged.publish_run_id}")
+    click.echo(f"Stage dir: {staged.stage_dir}")
+    click.echo(f"Files written: {len(staged.files_written)}")
+    for path in staged.files_written:
+        click.echo(path)
 
 
 @publish.command("log")

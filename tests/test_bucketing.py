@@ -87,6 +87,20 @@ def test_assign_buckets_include_document_class_dimension() -> None:
     assert document_class_bucket.value == "authoritative-technical"
 
 
+def test_assign_buckets_include_curated_bucket_dimension_when_present() -> None:
+    manifest = _build_manifest().model_copy(
+        update={
+            "document": _build_manifest().document.model_copy(update={"curated_bucket": "Pump Station Control Stack"})
+        }
+    )
+
+    assignments = assign_buckets(manifest)
+    curated_bucket = next(item for item in assignments if item.dimension == "curated_bucket")
+
+    assert curated_bucket.bucket_id == "honeywell/pump-station-control-stack/curated-bucket"
+    assert curated_bucket.value == "Pump Station Control Stack"
+
+
 def test_bucket_manifest_persists_assignments_and_status(tmp_path: Path) -> None:
     data_dir = tmp_path / "data"
     manifests_dir = data_dir / "manifests"
@@ -137,4 +151,13 @@ def test_derive_bucket_id_slugifies_components() -> None:
             dimension="product_family",
         )
         == "honeywell-home/dc-1000/product-family"
+    )
+    assert (
+        derive_bucket_id(
+            manufacturer="Honeywell / Home",
+            family="DC 1000+",
+            dimension="curated_bucket",
+            value="Pump Station Control Stack",
+        )
+        == "honeywell-home/pump-station-control-stack/curated-bucket"
     )

@@ -68,6 +68,15 @@ def test_document_validation_normalizes_fields() -> None:
     assert document.document_class == "authoritative-technical"
 
 
+def test_document_validation_normalizes_optional_curated_bucket() -> None:
+    payload = build_document().model_dump(mode="python")
+    payload.pop("doc_id", None)
+    payload["curated_bucket"] = "  Pump Station Control Stack  "
+    document = Document.model_validate(payload)
+
+    assert document.curated_bucket == "Pump Station Control Stack"
+
+
 def test_document_validation_rejects_invalid_language() -> None:
     with pytest.raises(ValueError, match="two-letter ISO 639-1 code"):
         Document(

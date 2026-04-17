@@ -33,12 +33,13 @@ def assign_buckets(manifest: ManifestEntry) -> list[BucketAssignment]:
     assignments: list[BucketAssignment] = []
 
     for dimension in BUCKET_DIMENSION_KEYS:
-        bucket_id = derive_bucket_id(
-            manufacturer=manifest.document.manufacturer,
-            family=manifest.document.family,
-            dimension=dimension,
-        )
         for value in _values_for_dimension(manifest, dimension):
+            bucket_id = derive_bucket_id(
+                manufacturer=manifest.document.manufacturer,
+                family=manifest.document.family,
+                dimension=dimension,
+                value=value,
+            )
             key = (dimension, bucket_id, value)
             existing = existing_by_key.get(key)
             if existing is not None:
@@ -57,9 +58,10 @@ def assign_buckets(manifest: ManifestEntry) -> list[BucketAssignment]:
     return assignments
 
 
-def derive_bucket_id(*, manufacturer: str, family: str, dimension: str) -> str:
+def derive_bucket_id(*, manufacturer: str, family: str, dimension: str, value: str | None = None) -> str:
     """Build the stable bucket identifier path for a dimension."""
-    return "/".join((slugify(manufacturer), slugify(family), slugify(dimension)))
+    scope = value if dimension == "curated_bucket" and value else family
+    return "/".join((slugify(manufacturer), slugify(scope), slugify(dimension)))
 
 
 def bucket_manifest(data_dir: Path, doc_id: str) -> BucketingResult:
@@ -123,6 +125,8 @@ def _values_for_dimension(manifest: ManifestEntry, dimension: str) -> list[str]:
         return [_fallback_value(document.document_type, "unknown-document-type")]
     if dimension == "document_class":
         return [_fallback_value(document.document_class, "unknown-document-class")]
+    if dimension == "curated_bucket":
+        return [document.curated_bucket] if document.curated_bucket else []
     if dimension == "revision_authority":
         return [_fallback_value(document.revision, "unknown-revision")]
     if dimension == "publication_date":
