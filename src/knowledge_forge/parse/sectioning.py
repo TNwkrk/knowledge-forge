@@ -783,7 +783,7 @@ def _classify_section(
     patterns = _patterns_for_context(context)
     title_variants = tuple(value for value in {title_haystack, normalized_title} if value)
 
-    if title_haystack in _SAFETY_ADMONITION_TITLES:
+    if any(title_variant in _SAFETY_ADMONITION_TITLES for title_variant in title_variants):
         return "safety"
 
     for section_type, candidates in patterns:
