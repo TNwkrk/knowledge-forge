@@ -184,12 +184,15 @@ def _load_fixture_records(fixture_dir: Path) -> list[_ActualRecordArtifact]:
     artifacts: list[_ActualRecordArtifact] = []
     for record_path in sorted(extracted_dir.glob("*/*.json")):
         record_type = record_path.parent.name
-        payload = json.loads(record_path.read_text(encoding="utf-8"))
+        if record_type == "reviews":
+            continue
         try:
             path_str = str(record_path.relative_to(repo_root))
         except ValueError:
             path_str = str(record_path)
+        payload: dict[str, object] = {}
         try:
+            payload = json.loads(record_path.read_text(encoding="utf-8"))
             model = get_schema_model(record_type)
             record = model.model_validate(payload)
         except Exception:
@@ -378,7 +381,8 @@ def _matching_fields(expected: object, actual: object) -> int:
         if not isinstance(actual, list):
             return 0
         matched = sum(_matching_fields(item, actual[index]) for index, item in enumerate(expected[: len(actual)]))
-        return matched
+        extra_actual_penalty = sum(_leaf_count(item) for item in actual[len(expected) :])
+        return max(0, matched - extra_actual_penalty)
     return int(expected == actual)
 
 
