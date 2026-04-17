@@ -774,10 +774,24 @@ def analyze_contradictions_command(bucket_id: str, config_path: Path | None) -> 
 
 @analyze.command("supersession")
 @click.argument("bucket_id", type=str)
-def analyze_supersession_command(bucket_id: str) -> None:
+@click.option(
+    "--config",
+    "config_path",
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    help="Optional inference config file used for fuzzy LLM-assisted comparison.",
+)
+def analyze_supersession_command(bucket_id: str, config_path: Path | None) -> None:
     """Analyze one bucket for supersession assessments."""
+    client: InferenceClient | None = None
+    if config_path is not None:
+        try:
+            config = InferenceConfig.load(config_path)
+            client = InferenceClient(config, data_dir=get_data_dir())
+        except (FileNotFoundError, ValueError) as exc:
+            raise click.ClickException(str(exc)) from exc
+
     try:
-        assessments = find_supersession_assessments(bucket_id, data_dir=get_data_dir())
+        assessments = find_supersession_assessments(bucket_id, client=client, data_dir=get_data_dir())
     except (FileNotFoundError, ValueError, KeyError) as exc:
         raise click.ClickException(str(exc)) from exc
 

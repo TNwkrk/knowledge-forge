@@ -338,7 +338,9 @@ def _build_contradiction_candidate(
     left: ComparableClaim,
     right: ComparableClaim,
 ) -> ContradictionCandidate:
-    authoritative, secondary = _preferred_claim_order(left, right)
+    left_meta = _compared_record_metadata(left)
+    right_meta = _compared_record_metadata(right)
+    authoritative, secondary = _preferred_claim_order(left, right, left_meta=left_meta, right_meta=right_meta)
     candidate = ContradictionCandidate(
         source_doc_id=authoritative.record.source_doc_id,
         source_page_range=authoritative.record.source_page_range,
@@ -359,7 +361,7 @@ def _build_contradiction_candidate(
             f"Both apply to overlapping records in bucket {bucket_id}."
         ),
         review_status="pending",
-        compared_records=[_compared_record_metadata(left), _compared_record_metadata(right)],
+        compared_records=[left_meta, right_meta],
     )
     return candidate.model_copy(update={"supersession": assess_supersession(candidate)})
 
@@ -410,9 +412,19 @@ def assess_supersession(candidate: ContradictionCandidate) -> SupersessionAssess
     )
 
 
-def _preferred_claim_order(left: ComparableClaim, right: ComparableClaim) -> tuple[ComparableClaim, ComparableClaim]:
+def _preferred_claim_order(
+    left: ComparableClaim,
+    right: ComparableClaim,
+    *,
+    left_meta: SupersessionRecordMetadata,
+    right_meta: SupersessionRecordMetadata,
+) -> tuple[ComparableClaim, ComparableClaim]:
     if left.precedence_level != right.precedence_level:
         return (left, right) if left.precedence_level < right.precedence_level else (right, left)
+    decision = _revision_or_date_supersession(left_meta, right_meta)
+    if decision is not None:
+        superseding_meta, _, _ = decision
+        return (left, right) if left_meta.record_id == superseding_meta.record_id else (right, left)
     return (left, right) if left.record_id <= right.record_id else (right, left)
 
 
@@ -501,9 +513,7 @@ def _revision_or_date_supersession(
         and right.publication_date is not None
         and left.publication_date != right.publication_date
     ):
-        superseding, superseded = (
-            (left, right) if left.publication_date > right.publication_date else (right, left)
-        )
+        superseding, superseded = (left, right) if left.publication_date > right.publication_date else (right, left)
         return (
             superseding,
             superseded,

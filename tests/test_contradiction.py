@@ -493,6 +493,71 @@ def test_analyze_contradictions_cli_reports_candidates_and_supersession(tmp_path
     assert "\thigh\t" in result.output
 
 
+def test_find_supersession_assessments_uses_publication_date_when_revisions_are_equal(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    bucket_id = "honeywell/dc1000/family"
+    older_doc_id = _register_fixture_doc(
+        _write_pdf(tmp_path / "manual-2023.pdf"),
+        data_dir,
+        document_type="Service Manual",
+        document_class="authoritative-technical",
+        revision="Rev-3-2023",
+        publication_date="2023-06-01",
+    )
+    newer_doc_id = _register_fixture_doc(
+        _write_pdf(tmp_path / "manual-2025.pdf"),
+        data_dir,
+        document_type="Service Manual",
+        document_class="authoritative-technical",
+        revision="Rev-3-2025",
+        publication_date="2025-01-15",
+    )
+
+    for doc_id, instruction in (
+        (older_doc_id, "Set parameter P-22 to 45 seconds before initiating shutdown."),
+        (newer_doc_id, "Set parameter P-22 to 60 seconds before initiating shutdown."),
+    ):
+        _write_record(
+            data_dir,
+            doc_id,
+            "procedure",
+            f"shutdown-{doc_id[-4:]}",
+            {
+                **_base_payload(doc_id, heading="Shutdown Procedure", start_page=14, end_page=15, bucket_id=bucket_id),
+                "title": "Configure shutdown delay",
+                "steps": [
+                    {
+                        **_base_payload(
+                            doc_id,
+                            heading="Shutdown Procedure",
+                            start_page=14,
+                            end_page=14,
+                            bucket_id=bucket_id,
+                        ),
+                        "step_number": 1,
+                        "instruction": instruction,
+                        "note": None,
+                        "caution": None,
+                        "figure_ref": None,
+                    }
+                ],
+                "applicability": _applicability_payload(doc_id, bucket_id),
+                "warnings": [],
+                "tools_required": [],
+            },
+        )
+
+    assessments = find_supersession_assessments(bucket_id, data_dir=data_dir)
+
+    assert len(assessments) == 1
+    assessment = assessments[0]
+    assert assessment.confidence == "medium"
+    assert assessment.document_types_compared == ["Service Manual", "Service Manual"]
+    assert "newer publication date" in assessment.precedence_rule_applied
+    assert "2025-01-15" in assessment.precedence_rule_applied
+    assert "2023-06-01" in assessment.precedence_rule_applied
+
+
 def test_analyze_supersession_cli_reports_assessments(tmp_path: Path) -> None:
     data_dir = tmp_path / "data"
     bucket_id = "honeywell/dc1000/family"
