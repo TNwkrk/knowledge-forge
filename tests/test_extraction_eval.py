@@ -91,14 +91,14 @@ def test_evaluate_extraction_reviews_subdir_is_skipped(tmp_path: Path, monkeypat
     """Files under a 'reviews' subdirectory must be ignored by the harness."""
     from knowledge_forge.evaluation import extraction_eval
 
-    fixture_dir = tmp_path / "reviews-skip-fixture"
+    fixture_dir = tmp_path / "reviews-skip-test"
     reviews_dir = fixture_dir / "extracted" / "reviews"
     reviews_dir.mkdir(parents=True)
     (reviews_dir / "review-001.json").write_text(json.dumps({"review": "data"}), encoding="utf-8")
     (fixture_dir / "ground_truth.json").write_text(
         json.dumps(
             {
-                "fixture_id": "reviews-skip-fixture",
+                "fixture_id": "reviews-skip-test",
                 "title": "Reviews skip test",
                 "source_pdf": "tests/fixtures/parser_eval/baseline/manual-structured/source.pdf",
                 "expected_records": {},
@@ -118,14 +118,14 @@ def test_evaluate_extraction_invalid_json_scores_as_invalid(tmp_path: Path, monk
     """A file containing invalid JSON must score as schema_valid=False, not crash."""
     from knowledge_forge.evaluation import extraction_eval
 
-    fixture_dir = tmp_path / "invalid-json-fixture"
+    fixture_dir = tmp_path / "invalid-json-test"
     extracted_dir = fixture_dir / "extracted" / "warning"
     extracted_dir.mkdir(parents=True)
     (extracted_dir / "record-001.json").write_text("NOT VALID JSON {{{", encoding="utf-8")
     (fixture_dir / "ground_truth.json").write_text(
         json.dumps(
             {
-                "fixture_id": "invalid-json-fixture",
+                "fixture_id": "invalid-json-test",
                 "title": "Invalid JSON test",
                 "source_pdf": "tests/fixtures/parser_eval/baseline/manual-structured/source.pdf",
                 "expected_records": {"warning": [{"severity": "warning", "text": "test", "context": "test"}]},
