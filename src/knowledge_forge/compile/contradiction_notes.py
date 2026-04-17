@@ -251,15 +251,16 @@ def _load_review_decisions(decision_path: Path) -> dict[str, ContradictionReview
         record_ids = tuple(sorted(str(record_id).strip() for record_id in item.get("record_ids", [])))
         if len(record_ids) != 2 or any(not record_id for record_id in record_ids):
             continue
+        candidate_key = _candidate_key(record_ids)
         decision = ContradictionReviewDecision(
-            candidate_key=str(item.get("candidate_key") or _candidate_key(record_ids)),
+            candidate_key=candidate_key,
             record_ids=record_ids,
             review_status=_sanitize_review_status(item.get("review_status")),
             reviewer=_optional_text(item.get("reviewer")),
             reviewed_at=_optional_text(item.get("reviewed_at")),
             notes=_optional_text(item.get("notes")),
         )
-        decisions[decision.candidate_key] = decision
+        decisions[candidate_key] = decision
     return decisions
 
 
