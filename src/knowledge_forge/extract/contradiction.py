@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from datetime import date
 from itertools import combinations
 from pathlib import Path
 from typing import Literal
@@ -15,7 +16,8 @@ from knowledge_forge.extract.schemas import (
     ExtractionSchemaModel,
     Procedure,
     SpecValue,
-    SupersessionCandidate,
+    SupersessionAssessment,
+    SupersessionRecordMetadata,
     Warning,
     get_schema_model,
 )
@@ -88,7 +90,7 @@ class ContradictionAnalysisReport:
 
     bucket_id: str
     contradictions: list[ContradictionCandidate]
-    supersessions: list[SupersessionCandidate]
+    supersessions: list[SupersessionAssessment]
     claims: list[ComparableClaim]
 
 
@@ -102,6 +104,16 @@ def find_contradiction_candidates(
     return analyze_contradictions(bucket_id, client=client, data_dir=data_dir).contradictions
 
 
+def find_supersession_assessments(
+    bucket_id: str,
+    *,
+    client: InferenceClient | None = None,
+    data_dir: Path | None = None,
+) -> list[SupersessionAssessment]:
+    """Return supersession assessments for one bucket."""
+    return analyze_contradictions(bucket_id, client=client, data_dir=data_dir).supersessions
+
+
 def analyze_contradictions(
     bucket_id: str,
     *,
@@ -113,7 +125,7 @@ def analyze_contradictions(
     claims = load_comparable_claims(bucket_id, data_dir=resolved_data_dir)
 
     contradictions: list[ContradictionCandidate] = []
-    supersessions: list[SupersessionCandidate] = []
+    supersessions: list[SupersessionAssessment] = []
     seen_pairs: set[tuple[str, str]] = set()
 
     for left, right in combinations(claims, 2):
@@ -128,10 +140,10 @@ def analyze_contradictions(
             continue
 
         seen_pairs.add(pair_key)
-        contradictions.append(_build_contradiction_candidate(bucket_id, left, right))
-        supersession = _build_supersession_candidate(bucket_id, left, right)
-        if supersession is not None:
-            supersessions.append(supersession)
+        contradiction = _build_contradiction_candidate(bucket_id, left, right)
+        contradictions.append(contradiction)
+        if contradiction.supersession is not None:
+            supersessions.append(contradiction.supersession)
 
     contradictions.sort(key=lambda candidate: tuple(candidate.record_ids))
     supersessions.sort(key=lambda candidate: (candidate.superseding_record_id, candidate.superseded_record_id))
@@ -327,7 +339,7 @@ def _build_contradiction_candidate(
     right: ComparableClaim,
 ) -> ContradictionCandidate:
     authoritative, secondary = _preferred_claim_order(left, right)
-    return ContradictionCandidate(
+    candidate = ContradictionCandidate(
         source_doc_id=authoritative.record.source_doc_id,
         source_page_range=authoritative.record.source_page_range,
         source_heading=authoritative.record.source_heading,
@@ -347,37 +359,54 @@ def _build_contradiction_candidate(
             f"Both apply to overlapping records in bucket {bucket_id}."
         ),
         review_status="pending",
+        compared_records=[_compared_record_metadata(left), _compared_record_metadata(right)],
     )
+    return candidate.model_copy(update={"supersession": assess_supersession(candidate)})
 
 
-def _build_supersession_candidate(
-    bucket_id: str,
-    left: ComparableClaim,
-    right: ComparableClaim,
-) -> SupersessionCandidate | None:
-    if left.precedence_level == right.precedence_level:
-        return None
+def assess_supersession(candidate: ContradictionCandidate) -> SupersessionAssessment:
+    """Determine which side of a contradiction is more authoritative."""
+    left, right = sorted(candidate.compared_records, key=lambda record: record.record_id)
 
-    superseding, superseded = _preferred_claim_order(left, right)
-    return SupersessionCandidate(
-        source_doc_id=superseding.record.source_doc_id,
-        source_page_range=superseding.record.source_page_range,
-        source_heading=superseding.record.source_heading,
-        parser_version=superseding.record.parser_version,
-        extraction_version=ANALYSIS_VERSION,
-        confidence=round(min(left.record.confidence, right.record.confidence), 3),
-        bucket_context=[context for context in superseding.record.bucket_context if context.bucket_id == bucket_id]
-        or superseding.record.bucket_context,
-        superseding_record_id=superseding.record_id,
-        superseded_record_id=superseded.record_id,
-        rationale=(
-            f"{superseding.document_type} outranks {superseded.document_type} for "
-            f"{superseding.subject_label} in bucket {bucket_id}."
-        ),
-        precedence_basis=(
+    if left.precedence_level != right.precedence_level:
+        superseding, superseded = sorted((left, right), key=lambda record: record.precedence_level)
+        rule = (
             f"{superseding.precedence_label} (level {superseding.precedence_level}) outranks "
             f"{superseded.precedence_label} (level {superseded.precedence_level})"
-        ),
+        )
+        reason = (
+            f"{superseding.document_type} from `{superseding.source_doc_id}` has the stronger document-type "
+            f"authority than `{superseded.source_doc_id}`."
+        )
+        confidence = "high"
+    else:
+        decision = _revision_or_date_supersession(left, right)
+        if decision is not None:
+            superseding, superseded, rule = decision
+            reason = (
+                f"{superseding.document_type} from `{superseding.source_doc_id}` is newer within the shared "
+                f"{superseding.precedence_label} tier."
+            )
+            confidence = "medium"
+        else:
+            superseding, superseded = (left, right) if left.record_id <= right.record_id else (right, left)
+            rule = (
+                f"same precedence tier: {left.precedence_label} (level {left.precedence_level}) "
+                f"for both compared records"
+            )
+            reason = (
+                "The compared records share the same precedence tier and do not expose a decisive revision "
+                "or publication-date signal, so this assessment should stay in human review."
+            )
+            confidence = "low"
+
+    return SupersessionAssessment(
+        superseding_record_id=superseding.record_id,
+        superseded_record_id=superseded.record_id,
+        confidence=confidence,
+        reason=reason,
+        precedence_rule_applied=rule,
+        document_types_compared=[superseding.document_type, superseded.document_type],
     )
 
 
@@ -385,6 +414,20 @@ def _preferred_claim_order(left: ComparableClaim, right: ComparableClaim) -> tup
     if left.precedence_level != right.precedence_level:
         return (left, right) if left.precedence_level < right.precedence_level else (right, left)
     return (left, right) if left.record_id <= right.record_id else (right, left)
+
+
+def _compared_record_metadata(claim: ComparableClaim) -> SupersessionRecordMetadata:
+    document = claim.manifest.document
+    return SupersessionRecordMetadata(
+        record_id=claim.record_id,
+        source_doc_id=claim.doc_id,
+        document_type=document.document_type,
+        document_class=document.document_class,
+        revision=document.revision,
+        publication_date=document.publication_date,
+        precedence_level=claim.precedence_level,
+        precedence_label=claim.precedence_label,
+    )
 
 
 def _document_precedence(manifest: ManifestEntry) -> tuple[int, str]:
@@ -434,6 +477,66 @@ def _is_original_revision(revision: str) -> bool:
     if normalized in {"original", "initial", "first-edition", "first edition"}:
         return True
     return normalized in {"rev 0", "rev0", "revision 0", "r0", "a", "rev a", "revision a"}
+
+
+def _revision_or_date_supersession(
+    left: SupersessionRecordMetadata,
+    right: SupersessionRecordMetadata,
+) -> tuple[SupersessionRecordMetadata, SupersessionRecordMetadata, str] | None:
+    if left.document_type.casefold() != right.document_type.casefold():
+        return None
+
+    left_revision = _revision_sort_key(left.revision)
+    right_revision = _revision_sort_key(right.revision)
+    if left_revision is not None and right_revision is not None and left_revision != right_revision:
+        superseding, superseded = (left, right) if left_revision > right_revision else (right, left)
+        return (
+            superseding,
+            superseded,
+            f"same document type; newer revision `{superseding.revision}` supersedes `{superseded.revision}`",
+        )
+
+    if (
+        left.publication_date is not None
+        and right.publication_date is not None
+        and left.publication_date != right.publication_date
+    ):
+        superseding, superseded = (
+            (left, right) if left.publication_date > right.publication_date else (right, left)
+        )
+        return (
+            superseding,
+            superseded,
+            "same document type; newer publication date "
+            f"{_format_publication_date(superseding.publication_date)} supersedes "
+            f"{_format_publication_date(superseded.publication_date)}",
+        )
+
+    return None
+
+
+def _revision_sort_key(revision: str | None) -> tuple[int, int] | None:
+    normalized = _normalized_revision(revision)
+    if normalized is None:
+        return None
+    if _is_original_revision(normalized):
+        return (0, 0)
+    if normalized in {"current", "latest"}:
+        return (3, 9999)
+
+    number_match = re.search(r"(\d+)", normalized)
+    if number_match is not None:
+        return (2, int(number_match.group(1)))
+
+    alpha_match = re.search(r"\b([a-z])\b", normalized)
+    if alpha_match is not None:
+        return (1, ord(alpha_match.group(1)) - ord("a") + 1)
+
+    return None
+
+
+def _format_publication_date(value: date | None) -> str:
+    return value.isoformat() if value is not None else "unknown"
 
 
 def _applicability_scope(

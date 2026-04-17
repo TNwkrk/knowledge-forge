@@ -18,6 +18,10 @@ from knowledge_forge.extract.schemas.procedure import Procedure
 from knowledge_forge.extract.schemas.procedure_step import ProcedureStep
 from knowledge_forge.extract.schemas.revision_note import RevisionNote
 from knowledge_forge.extract.schemas.spec_value import SpecValue
+from knowledge_forge.extract.schemas.supersession_assessment import (
+    SupersessionAssessment,
+    SupersessionRecordMetadata,
+)
 from knowledge_forge.extract.schemas.supersession_candidate import SupersessionCandidate
 from knowledge_forge.extract.schemas.troubleshooting_entry import TroubleshootingEntry
 from knowledge_forge.extract.schemas.warning import Warning
@@ -74,7 +78,9 @@ __all__ = [
     "SCHEMA_REGISTRY",
     "SourcePageRange",
     "SpecValue",
+    "SupersessionAssessment",
     "SupersessionCandidate",
+    "SupersessionRecordMetadata",
     "TroubleshootingEntry",
     "Warning",
 ]
