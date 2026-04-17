@@ -1,0 +1,22 @@
+{
+  "source_doc_id": "sop-checklist",
+  "source_page_range": {
+    "start_page": 1,
+    "end_page": 1
+  },
+  "source_heading": "Procedure",
+  "parser_version": "test-docling-1.0",
+  "extraction_version": "extraction/baseline@v1:test-model",
+  "confidence": 0.9,
+  "bucket_context": [
+    {
+      "bucket_id": "operations/sop-checklist/workflow",
+      "dimension": "workflow",
+      "value": "Cooling Tower SOP"
+    }
+  ],
+  "severity": "caution",
+  "text": "Lock out the fan before inspection.",
+  "context": "Procedure",
+  "applicability": null
+}

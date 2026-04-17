@@ -1,0 +1,70 @@
+{
+  "source_doc_id": "sop-checklist",
+  "source_page_range": {
+    "start_page": 1,
+    "end_page": 1
+  },
+  "source_heading": "Procedure",
+  "parser_version": "test-docling-1.0",
+  "extraction_version": "extraction/baseline@v1:test-model",
+  "confidence": 0.93,
+  "bucket_context": [
+    {
+      "bucket_id": "operations/sop-checklist/workflow",
+      "dimension": "workflow",
+      "value": "Cooling Tower SOP"
+    }
+  ],
+  "title": "Tower startup checklist",
+  "steps": [
+    {
+      "source_doc_id": "sop-checklist",
+      "source_page_range": {
+        "start_page": 1,
+        "end_page": 1
+      },
+      "source_heading": "Procedure",
+      "parser_version": "test-docling-1.0",
+      "extraction_version": "extraction/baseline@v1:test-model",
+      "confidence": 0.93,
+      "bucket_context": [
+        {
+          "bucket_id": "operations/sop-checklist/workflow",
+          "dimension": "workflow",
+          "value": "Cooling Tower SOP"
+        }
+      ],
+      "step_number": 1,
+      "instruction": "Verify the basin level.",
+      "note": null,
+      "caution": null,
+      "figure_ref": null
+    },
+    {
+      "source_doc_id": "sop-checklist",
+      "source_page_range": {
+        "start_page": 1,
+        "end_page": 1
+      },
+      "source_heading": "Procedure",
+      "parser_version": "test-docling-1.0",
+      "extraction_version": "extraction/baseline@v1:test-model",
+      "confidence": 0.93,
+      "bucket_context": [
+        {
+          "bucket_id": "operations/sop-checklist/workflow",
+          "dimension": "workflow",
+          "value": "Cooling Tower SOP"
+        }
+      ],
+      "step_number": 2,
+      "instruction": "Start the recirculation pump.",
+      "note": "Confirm the isolation valves are open.",
+      "caution": null,
+      "figure_ref": null
+    }
+  ],
+  "applicability": null,
+  "warnings": [],
+  "tools_required": []
+}

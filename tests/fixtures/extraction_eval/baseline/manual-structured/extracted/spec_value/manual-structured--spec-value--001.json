@@ -1,0 +1,23 @@
+{
+  "source_doc_id": "manual-structured",
+  "source_page_range": {
+    "start_page": 3,
+    "end_page": 3
+  },
+  "source_heading": "Specifications",
+  "parser_version": "test-docling-1.0",
+  "extraction_version": "extraction/baseline@v1:test-model",
+  "confidence": 0.89,
+  "bucket_context": [
+    {
+      "bucket_id": "acme/manual-structured/family",
+      "dimension": "family",
+      "value": "ACME"
+    }
+  ],
+  "parameter": "Voltage",
+  "value": "120",
+  "unit": "V",
+  "conditions": null,
+  "applicability": null
+}

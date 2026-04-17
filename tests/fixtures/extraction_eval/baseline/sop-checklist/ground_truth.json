@@ -1,0 +1,39 @@
+{
+  "fixture_id": "sop-checklist",
+  "title": "Operational SOP extraction fixture",
+  "source_pdf": "tests/fixtures/parser_eval/baseline/sop-checklist/source.pdf",
+  "expected_records": {
+    "procedure": [
+      {
+        "title": "Tower startup checklist",
+        "steps": [
+          {
+            "step_number": 1,
+            "instruction": "Verify the basin level.",
+            "note": null,
+            "caution": null,
+            "figure_ref": null
+          },
+          {
+            "step_number": 2,
+            "instruction": "Start the recirculation pump.",
+            "note": "Confirm the isolation valves are open.",
+            "caution": null,
+            "figure_ref": null
+          }
+        ],
+        "applicability": null,
+        "warnings": [],
+        "tools_required": []
+      }
+    ],
+    "warning": [
+      {
+        "severity": "caution",
+        "text": "Lock out the fan before inspection.",
+        "context": "Procedure",
+        "applicability": null
+      }
+    ]
+  }
+}
