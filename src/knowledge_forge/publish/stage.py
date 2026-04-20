@@ -29,14 +29,6 @@ ALLOWED_PUBLISH_DIRECTORIES = frozenset(
         "_sources",
     }
 )
-TOPIC_DIRECTORY_MAP = {
-    "startup_procedure": "workflow-guidance",
-    "shutdown_procedure": "workflow-guidance",
-    "maintenance_procedure": "workflow-guidance",
-    "alarm_reference": "fault-codes",
-    "troubleshooting": "symptoms",
-    "specifications": "controllers",
-}
 TOPIC_DIGEST_TYPE_MAP = {
     "startup_procedure": "workflow-guidance",
     "shutdown_procedure": "workflow-guidance",

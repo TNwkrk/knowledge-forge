@@ -101,6 +101,7 @@ def _digest_frontmatter(
     title: str = "Compiled Digest",
     source_documents: list[dict[str, object]] | None = None,
     cross_links: list[str] | None = None,
+    bucket_id: str | None = None,
 ) -> dict[str, object]:
     payload: dict[str, object] = {
         "title": title,
@@ -117,6 +118,8 @@ def _digest_frontmatter(
         "compilation_version": "compile-v1",
         "tags": [digest_type],
     }
+    if bucket_id is not None:
+        payload["bucket_id"] = bucket_id
     if digest_type == "controller":
         payload["controller_models"] = ["DC1000"]
         payload["system_types"] = []
@@ -443,6 +446,7 @@ def test_validate_publish_output_accepts_supported_target_directories(tmp_path: 
             title="Honeywell DC1000 Controller Digest",
             source_documents=[source_doc],
             cross_links=["../workflow-guidance/honeywell-dc1000-family-startup-procedure.md"],
+            bucket_id="honeywell/dc1000/family",
         ),
         "## Summary\n\nController summary.\n\n## Field Guidance\n\nController guidance.\n\n## Source Citations\n\n"
         "- Citation\n\n## Related Pages\n\n- ../workflow-guidance/honeywell-dc1000-family-startup-procedure.md\n",
@@ -454,6 +458,7 @@ def test_validate_publish_output_accepts_supported_target_directories(tmp_path: 
             slug="honeywell-dc1000-family-alarm-reference",
             title="Honeywell DC1000 Alarm Reference",
             source_documents=[source_doc],
+            bucket_id="honeywell/dc1000/family",
         ),
         "## Summary\n\nAlarm summary.\n\n## Field Guidance\n\nAlarm guidance.\n\n## Source Citations\n\n"
         "- Citation\n\n## Related Pages\n\n- None yet.\n",
@@ -465,6 +470,7 @@ def test_validate_publish_output_accepts_supported_target_directories(tmp_path: 
             slug="honeywell-dc1000-family-troubleshooting",
             title="Honeywell DC1000 Troubleshooting",
             source_documents=[source_doc],
+            bucket_id="honeywell/dc1000/family",
         ),
         "## Summary\n\nSymptom summary.\n\n## Field Guidance\n\nSymptom guidance.\n\n## Source Citations\n\n"
         "- Citation\n\n## Related Pages\n\n- None yet.\n",
@@ -476,6 +482,7 @@ def test_validate_publish_output_accepts_supported_target_directories(tmp_path: 
             slug="honeywell-dc1000-family-startup-procedure",
             title="Honeywell DC1000 Startup Procedure",
             source_documents=[source_doc],
+            bucket_id="honeywell/dc1000/family",
         ),
         "## Summary\n\nWorkflow summary.\n\n## Field Guidance\n\nWorkflow guidance.\n\n## Source Citations\n\n"
         "- Citation\n\n## Related Pages\n\n- None yet.\n",
@@ -487,6 +494,7 @@ def test_validate_publish_output_accepts_supported_target_directories(tmp_path: 
             slug="honeywell-dc1000-family",
             title="Contradictions for Honeywell DC1000",
             source_documents=[source_doc],
+            bucket_id="honeywell/dc1000/family",
         ),
         "## Summary\n\nContradiction summary.\n\n## Field Guidance\n\nContradiction guidance.\n\n"
         "## Source Citations\n\n- Citation\n\n## Related Pages\n\n- None yet.\n",
@@ -565,6 +573,65 @@ def test_validate_publish_output_rejects_invalid_structure_and_duplicate_identit
     assert any("filename must match frontmatter slug" in error for error in report.errors)
     assert any("duplicate canonical identity" in error for error in report.errors)
     assert any("orphan removal not previously published" in error for error in report.errors)
+
+
+def test_validate_publish_output_rejects_missing_or_invalid_list_fields(tmp_path: Path) -> None:
+    stage_dir = tmp_path / "data" / "publish" / "kf-20260416-006"
+    publish_root = stage_dir / "repo-wiki" / "knowledge"
+
+    invalid_frontmatter = _digest_frontmatter(
+        digest_type="controller",
+        slug="honeywell-dc1000-family-controller-digest",
+        bucket_id="honeywell/dc1000/family",
+    )
+    invalid_frontmatter.pop("knowledge_record_ids")
+    invalid_frontmatter["tags"] = ["controller", ""]
+    invalid_frontmatter["cross_links"] = ["../workflow-guidance/honeywell-dc1000-family-startup-procedure.md", 123]
+
+    _write_markdown(
+        publish_root / "controllers" / "honeywell-dc1000-family-controller-digest.md",
+        invalid_frontmatter,
+        "## Summary\n\nController summary.\n\n## Field Guidance\n\nController guidance.\n\n## Source Citations\n\n"
+        "- Citation\n\n## Related Pages\n\n- ../workflow-guidance/honeywell-dc1000-family-startup-procedure.md\n",
+    )
+    _write_manifest(
+        stage_dir,
+        "kf-20260416-006",
+        files_written=["controllers/honeywell-dc1000-family-controller-digest.md"],
+    )
+
+    report = validate_publish_output(stage_dir)
+
+    assert report.valid is False
+    assert any("missing required frontmatter fields ['knowledge_record_ids']" in error for error in report.errors)
+    assert any("tags[1] must be a non-empty string" in error for error in report.errors)
+    assert any("cross_links[1] must be a non-empty string" in error for error in report.errors)
+
+
+def test_validate_publish_output_rejects_bucket_slug_mismatch(tmp_path: Path) -> None:
+    stage_dir = tmp_path / "data" / "publish" / "kf-20260416-007"
+    publish_root = stage_dir / "repo-wiki" / "knowledge"
+
+    _write_markdown(
+        publish_root / "controllers" / "wrong-controller-slug.md",
+        _digest_frontmatter(
+            digest_type="controller",
+            slug="wrong-controller-slug",
+            bucket_id="honeywell/dc1000/family",
+        ),
+        "## Summary\n\nController summary.\n\n## Field Guidance\n\nController guidance.\n\n## Source Citations\n\n"
+        "- Citation\n\n## Related Pages\n\n- None yet.\n",
+    )
+    _write_manifest(
+        stage_dir,
+        "kf-20260416-007",
+        files_written=["controllers/wrong-controller-slug.md"],
+    )
+
+    report = validate_publish_output(stage_dir)
+
+    assert report.valid is False
+    assert any("slug must match bucket-derived pattern" in error for error in report.errors)
 
 
 def test_publish_validate_cli_reports_success_and_failure(tmp_path: Path) -> None:

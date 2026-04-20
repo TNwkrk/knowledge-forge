@@ -428,8 +428,8 @@ def _build_title(records: list[TopicRecord], topic: str) -> str:
     return f"{document.manufacturer} {document.family} {TOPIC_TITLES[topic]}"
 
 
-def _build_source_documents(records: list[TopicRecord]) -> list[dict[str, str]]:
-    seen: dict[tuple[str, str], dict[str, str | None]] = {}
+def _build_source_documents(records: list[TopicRecord]) -> list[dict[str, object]]:
+    seen: dict[tuple[str, str], dict[str, object]] = {}
     for entry in records:
         document = entry.manifest.document
         locator = f'section "{entry.section.title}" ({record_page_label(entry.record)})'

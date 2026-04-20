@@ -39,6 +39,8 @@ REQUIRED_DIGEST_FRONTMATTER_FIELDS = frozenset(
         "slug",
         "status",
         "source_documents",
+        "knowledge_record_ids",
+        "tags",
         "cross_links",
         "generated_by",
         "publish_run",
@@ -167,10 +169,9 @@ def _validate_digest_page(relative_path: Path, markdown_path: Path, frontmatter:
     errors.extend(_validate_slug_and_filename(relative_path, frontmatter))
     errors.extend(_validate_status(relative_path, frontmatter))
     errors.extend(_validate_digest_source_documents(relative_path, frontmatter))
-
-    cross_links = frontmatter.get("cross_links")
-    if not isinstance(cross_links, list):
-        errors.append(f"{relative_path.as_posix()}: cross_links must be a list")
+    errors.extend(_validate_string_list_field(relative_path, frontmatter, "knowledge_record_ids"))
+    errors.extend(_validate_string_list_field(relative_path, frontmatter, "tags"))
+    errors.extend(_validate_string_list_field(relative_path, frontmatter, "cross_links"))
 
     required_page_type_fields = PAGE_TYPE_REQUIRED_FIELDS.get(str(digest_type), frozenset())
     missing_page_type_fields = sorted(field for field in required_page_type_fields if field not in frontmatter)
@@ -233,6 +234,19 @@ def _validate_slug_and_filename(relative_path: Path, frontmatter: dict[str, obje
         errors.append(f"{relative_path.as_posix()}: slug must be lowercase hyphen-separated")
     if relative_path.stem != slug:
         errors.append(f"{relative_path.as_posix()}: filename must match frontmatter slug")
+    bucket_id = frontmatter.get("bucket_id")
+    if isinstance(bucket_id, str) and bucket_id.strip():
+        expected_slug = _expected_bucket_slug(bucket_id=bucket_id, digest_type=frontmatter.get("digest_type"))
+        if expected_slug is not None and slug != expected_slug:
+            errors.append(
+                f"{relative_path.as_posix()}: slug must match bucket-derived pattern '{expected_slug}' "
+                f"for digest_type '{frontmatter.get('digest_type')}'"
+            )
+        elif frontmatter.get("digest_type") == "workflow-guidance" and not slug.startswith(f"{slugify(bucket_id)}-"):
+            errors.append(
+                f"{relative_path.as_posix()}: workflow-guidance slug must start with "
+                f"'{slugify(bucket_id)}-' when bucket_id is present"
+            )
     return errors
 
 
@@ -260,6 +274,30 @@ def _validate_digest_source_documents(relative_path: Path, frontmatter: dict[str
         if "attachment_id" not in entry:
             errors.append(f"{relative_path.as_posix()}: source_documents[{index}] missing attachment_id key")
     return errors
+
+
+def _validate_string_list_field(relative_path: Path, frontmatter: dict[str, object], field_name: str) -> list[str]:
+    payload = frontmatter.get(field_name)
+    if not isinstance(payload, list):
+        return [f"{relative_path.as_posix()}: {field_name} must be a list"]
+    errors: list[str] = []
+    for index, value in enumerate(payload):
+        if not isinstance(value, str) or not value.strip():
+            errors.append(f"{relative_path.as_posix()}: {field_name}[{index}] must be a non-empty string")
+    return errors
+
+
+def _expected_bucket_slug(*, bucket_id: str, digest_type: object) -> str | None:
+    bucket_slug = slugify(bucket_id)
+    if digest_type == "controller":
+        return f"{bucket_slug}-controller-digest"
+    if digest_type == "fault-code":
+        return f"{bucket_slug}-alarm-reference"
+    if digest_type == "symptom":
+        return f"{bucket_slug}-troubleshooting"
+    if digest_type == "contradiction":
+        return bucket_slug
+    return None
 
 
 def _validate_required_sections(relative_path: Path, markdown_path: Path) -> list[str]:
