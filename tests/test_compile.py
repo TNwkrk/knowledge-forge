@@ -257,6 +257,60 @@ def test_compile_source_page_renders_frontmatter_sections_summary_and_quality_no
     assert manifest.document.status == DocumentStatus.COMPILED
 
 
+def test_compile_source_page_suppresses_non_reviewable_sections_from_reviewer_facing_output(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    doc_id = _register_extracted_fixture(_write_pdf(tmp_path / "manual.pdf"), data_dir)
+    startup_section = f"{doc_id}--startup--001"
+    noisy_section = f"{doc_id}--continued--001"
+    _write_section(
+        data_dir,
+        doc_id,
+        section_id=startup_section,
+        title="Startup Procedure",
+        section_type="startup",
+        page_range=(18, 20),
+    )
+    _write_section(
+        data_dir,
+        doc_id,
+        section_id=noisy_section,
+        title="continued",
+        section_type="other",
+        page_range=(21, 21),
+    )
+    _write_record(
+        data_dir,
+        doc_id,
+        "procedure",
+        f"{startup_section}--procedure--001",
+        {
+            **_base_record(doc_id, heading="Startup Procedure", start_page=18, end_page=20, confidence=0.92),
+            "title": "Start the controller",
+            "steps": [
+                {
+                    **_base_record(doc_id, heading="Startup Procedure", start_page=18, end_page=18, confidence=0.92),
+                    "step_number": 1,
+                    "instruction": "Apply control power.",
+                    "note": None,
+                    "caution": None,
+                    "figure_ref": None,
+                }
+            ],
+            "applicability": None,
+            "warnings": [],
+            "tools_required": [],
+        },
+    )
+
+    page = compile_source_page(doc_id, data_dir=data_dir)
+    rendered = page.render()
+
+    section_index = rendered.split("## Section Index", 1)[1].split("## Extraction Summary", 1)[0]
+    assert "Startup Procedure" in section_index
+    assert "continued" not in section_index
+    assert "Suppressed non-reviewable sections from reviewer-facing output: 1" in rendered
+
+
 def test_compile_source_page_cli_supports_single_document_and_all(tmp_path: Path) -> None:
     data_dir = tmp_path / "data"
     first_doc_id = _register_extracted_fixture(_write_pdf(tmp_path / "manual-1.pdf"), data_dir)
@@ -537,6 +591,96 @@ def test_compile_alarm_reference_draft_synthesis_keeps_prose_when_citations_wrap
     assert "## Source-backed Claims" in rendered
     assert draft_synthesis.strip() != "[Source: honeywell-dc1000-service-manual-rev-3, pp.40-41]"
     assert "\n  [Source:" not in draft_synthesis
+
+
+def test_compile_topic_page_filters_low_signal_other_sections(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    doc_id = _register_extracted_fixture(_write_pdf(tmp_path / "manual-specs.pdf"), data_dir)
+    valid_section = f"{doc_id}--specifications--001"
+    noisy_section = f"{doc_id}--continued--001"
+    low_confidence_other = f"{doc_id}--technical-data--002"
+
+    _write_section(
+        data_dir,
+        doc_id,
+        section_id=valid_section,
+        title="Technical Data",
+        section_type="specifications",
+        page_range=(30, 31),
+    )
+    _write_section(
+        data_dir,
+        doc_id,
+        section_id=noisy_section,
+        title="continued",
+        section_type="other",
+        page_range=(32, 32),
+    )
+    _write_section(
+        data_dir,
+        doc_id,
+        section_id=low_confidence_other,
+        title="Technical Data",
+        section_type="other",
+        page_range=(33, 33),
+    )
+    _write_record(
+        data_dir,
+        doc_id,
+        "spec_value",
+        f"{valid_section}--spec_value--001",
+        {
+            **_base_record(doc_id, heading="Technical Data", start_page=30, end_page=31, confidence=0.95),
+            "extraction_version": "extraction/spec_value@v1:gpt-4o-mini",
+            "parameter": "Operating pressure",
+            "value": "15",
+            "unit": "PSI",
+            "conditions": "startup mode",
+            "applicability": None,
+        },
+    )
+    _write_record(
+        data_dir,
+        doc_id,
+        "spec_value",
+        f"{noisy_section}--spec_value--001",
+        {
+            **_base_record(doc_id, heading="continued", start_page=32, end_page=32, confidence=0.99),
+            "extraction_version": "extraction/spec_value@v1:gpt-4o-mini",
+            "parameter": "Noise row",
+            "value": "999",
+            "unit": "PSI",
+            "conditions": None,
+            "applicability": None,
+        },
+    )
+    _write_record(
+        data_dir,
+        doc_id,
+        "spec_value",
+        f"{low_confidence_other}--spec_value--001",
+        {
+            **_base_record(doc_id, heading="Technical Data", start_page=33, end_page=33, confidence=0.61),
+            "extraction_version": "extraction/spec_value@v1:gpt-4o-mini",
+            "parameter": "Ignored low-confidence row",
+            "value": "12",
+            "unit": "PSI",
+            "conditions": None,
+            "applicability": None,
+        },
+    )
+
+    page = compile_topic_page(
+        "honeywell/dc1000/family",
+        "specifications",
+        client=_FakeCompileClient(""),
+        data_dir=data_dir,
+    )
+    rendered = page.render()
+
+    assert "Operating pressure: 15 PSI (startup mode)" in rendered
+    assert "Noise row: 999 PSI" not in rendered
+    assert "Ignored low-confidence row: 12 PSI" not in rendered
 
 
 def test_render_contradiction_notes_generates_bucket_summary_page_and_cli(tmp_path: Path) -> None:

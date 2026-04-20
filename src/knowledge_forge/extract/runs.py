@@ -18,6 +18,7 @@ from knowledge_forge.extract.engine import (
     ExtractionFingerprint,
     ExtractionWorkItemResult,
     build_extraction_fingerprint,
+    build_skipped_work_item_result,
     execute_work_item,
     load_prompt_template,
     load_section_quality,
@@ -28,6 +29,7 @@ from knowledge_forge.extract.engine import (
     utc_now,
 )
 from knowledge_forge.extract.provenance import load_bucket_context, load_parse_metadata
+from knowledge_forge.extract.reviewability import assess_section_reviewability
 from knowledge_forge.inference import (
     BatchBuilder,
     BatchFailure,
@@ -490,6 +492,7 @@ def _build_run_items(
                 missing = sorted(requested - {section.section_id for section in sections})
                 raise FileNotFoundError(f"sections not found for doc_id '{document.doc_id}': {', '.join(missing)}")
         for section in sections:
+            reviewability = assess_section_reviewability(section)
             for record_type in record_types_for_section_type(section.section_type):
                 template = load_prompt_template(record_type)
                 model = template.model or client.config.extraction_model
@@ -499,6 +502,32 @@ def _build_run_items(
                     model=model,
                     prompt_template=template,
                 )
+                if not reviewability.reviewable:
+                    skipped = build_skipped_work_item_result(
+                        section=section,
+                        record_type=record_type,
+                        client=client,
+                        data_dir=data_dir,
+                        min_confidence=0.0,
+                        reasons=reviewability.reason_codes,
+                        messages=reviewability.messages,
+                        model_override=model,
+                    )
+                    items.append(
+                        ExtractionRunItem(
+                            item_id=f"{section.section_id}::{record_type}",
+                            doc_id=document.doc_id,
+                            section_id=section.section_id,
+                            section_type=section.section_type,
+                            record_type=record_type,
+                            fingerprint=skipped.fingerprint,
+                            status=ExtractionRunItemStatus.SKIPPED,
+                            last_error="; ".join(skipped.errors) if skipped.errors else None,
+                            completed_at=utc_now(),
+                            selected_model=skipped.fingerprint.model,
+                        )
+                    )
+                    continue
                 items.append(
                     ExtractionRunItem(
                         item_id=f"{section.section_id}::{record_type}",
@@ -1173,7 +1202,12 @@ def _update_item_from_result(
     *,
     dispatch_mode: str,
 ) -> ExtractionRunItem:
-    status = ExtractionRunItemStatus.SUCCEEDED if result.status == "succeeded" else ExtractionRunItemStatus.FAILED
+    if result.status == "succeeded":
+        status = ExtractionRunItemStatus.SUCCEEDED
+    elif result.status == "skipped":
+        status = ExtractionRunItemStatus.SKIPPED
+    else:
+        status = ExtractionRunItemStatus.FAILED
     error = None if not result.errors else "; ".join(result.errors)
     return item.model_copy(
         update={

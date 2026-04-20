@@ -16,6 +16,7 @@ from knowledge_forge.extract.engine import (
     extract_section,
     load_prompt_template,
 )
+from knowledge_forge.extract.reviewability import assess_section_reviewability
 from knowledge_forge.intake.importer import RegistrationRequest, load_manifest, register_document
 from knowledge_forge.intake.manifest import BucketAssignment, DocumentStatus
 from knowledge_forge.parse.sectioning import Section
@@ -329,6 +330,69 @@ def test_extract_document_loads_sections_and_marks_manifest_extracted(tmp_path: 
     assert payload["parameter"] == "Supply voltage"
     assert payload["parser_version"] == "docling-1.2.0"
     assert payload["bucket_context"][0]["value"] == "DC1000"
+
+
+@pytest.mark.parametrize(
+    ("title", "reason_code"),
+    [
+        ("continued", "generic_carryover_title"),
+        ("D", "single_letter_title"),
+        ("2.", "numeric_fragment_title"),
+        (
+            "B-1 local I/O backplane memory use 3-4 CompactBus 3-5 configuring 3-7 generic profile 3-17 overview 3-1",
+            "toc_fragment_title",
+        ),
+    ],
+)
+def test_assess_section_reviewability_flags_rockwell_like_malformed_titles(
+    title: str,
+    reason_code: str,
+) -> None:
+    assessment = assess_section_reviewability(
+        Section(
+            doc_id="rockwell-doc",
+            section_id="rockwell-doc--section--001",
+            section_type="other",
+            title=title,
+            content="Placeholder content",
+            page_range=(1, 1),
+            heading_path=[title],
+        )
+    )
+
+    assert assessment.reviewable is False
+    assert reason_code in assessment.reason_codes
+
+
+def test_extract_section_skips_non_reviewable_titles_before_inference(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    doc_id = _register_parsed_fixture(_write_pdf(tmp_path / "manual.pdf"), data_dir)
+    _write_parse_meta(data_dir, doc_id)
+    _write_bucket_assignments(data_dir, doc_id)
+    section = Section(
+        doc_id=doc_id,
+        section_id=f"{doc_id}--continued--001",
+        section_type="troubleshooting",
+        title="continued",
+        content="Carryover heading with low-value spillover content.",
+        page_range=(18, 18),
+        heading_path=["Troubleshooting", "continued"],
+    )
+    client = _FakeClient({"troubleshooting_entry": [], "alarm_definition": []})
+
+    records = extract_section(section, client=client, data_dir=data_dir)
+
+    assert records == []
+    assert client.calls == []
+    troubleshooting_flag = (
+        data_dir / "extracted" / doc_id / "reviews" / f"{section.section_id}--troubleshooting_entry.json"
+    )
+    alarm_flag = data_dir / "extracted" / doc_id / "reviews" / f"{section.section_id}--alarm_definition.json"
+    assert troubleshooting_flag.exists()
+    assert alarm_flag.exists()
+    payload = json.loads(troubleshooting_flag.read_text(encoding="utf-8"))
+    assert payload["reasons"] == ["section_not_reviewable", "generic_carryover_title"]
+    assert "generic carryover heading" in payload["errors"][0]
 
 
 def test_section_type_mapping_covers_all_canonical_section_types() -> None:

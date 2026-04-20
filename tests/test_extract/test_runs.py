@@ -540,3 +540,38 @@ def test_model_routing_retry_class_matches_429_message_variants(monkeypatch, tmp
     assert routed_items["procedure"].selected_model == "gpt-4o-mini"
     assert routed_items["warning"].selected_model == "gpt-4.1-mini"
     assert routed_items["warning"].fingerprint.model == "gpt-4.1-mini"
+
+
+def test_create_and_execute_run_skips_non_reviewable_sections_without_dispatch(monkeypatch, tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    doc_id = _register_parsed_fixture(_write_pdf(tmp_path / "manual.pdf"), data_dir)
+    _write_parse_meta(data_dir, doc_id)
+    _write_bucket_assignments(data_dir, doc_id)
+    skipped_section = Section(
+        doc_id=doc_id,
+        section_id=f"{doc_id}--tip--001",
+        section_type="startup",
+        title="TIP",
+        content="Generic carryover callout that should not spend inference.",
+        page_range=(7, 7),
+        heading_path=["Startup", "TIP"],
+    )
+    _write_section(data_dir / "sections" / doc_id / f"{skipped_section.section_id}.json", skipped_section)
+    config = _FakeConfig()
+    monkeypatch.setattr("knowledge_forge.extract.runs.InferenceClient", _FingerprintOnlyClient)
+
+    run = create_extraction_run([doc_id], config=config, data_dir=data_dir)
+    assert all(item.status == ExtractionRunItemStatus.SKIPPED for item in run.items)
+
+    def should_not_run(**kwargs):
+        raise AssertionError("execute_work_item should not run for pre-skipped sections")
+
+    monkeypatch.setattr("knowledge_forge.extract.runs.execute_work_item", should_not_run)
+    execution = execute_extraction_run(run.run_id, config=config, data_dir=data_dir)
+
+    assert execution.run.status == ExtractionRunStatus.COMPLETED
+    assert execution.run.metrics.skipped == 2
+    assert execution.run.metrics.direct_dispatch_count == 0
+    assert execution.run.metrics.batch_dispatch_count == 0
+    review_flag = data_dir / "extracted" / doc_id / "reviews" / f"{skipped_section.section_id}--procedure.json"
+    assert review_flag.exists()
