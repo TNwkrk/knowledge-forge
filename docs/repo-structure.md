@@ -233,6 +233,14 @@ for:
 Agents should stage FlowCommander-facing output here first rather than writing
 directly into the downstream repository during normal work.
 
+Publish staging rewrites the internal compile intermediates into the downstream
+FlowCommander digest taxonomy under `repo-wiki/knowledge/`. In particular,
+older internal groupings such as manufacturer overviews and topic pages are not
+the publish contract themselves; `src/knowledge_forge/publish/` is responsible
+for mapping them into `controllers/`, `fault-codes/`, `symptoms/`,
+`workflow-guidance/`, `contradictions/`, `supersessions/`, and `source-index/`
+before PR handoff.
+
 ## Evaluation skeleton
 
 The repository now includes a lightweight place for future fixture-driven

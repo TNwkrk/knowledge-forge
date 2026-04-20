@@ -12,29 +12,68 @@ from knowledge_forge.publish.manifest import PublishManifest
 
 ALLOWED_TARGET_DIRECTORIES = frozenset(
     {
-        "analysis",
-        "manufacturers",
-        "procedures",
-        "specs",
-        "troubleshooting",
+        "controllers",
+        "fault-codes",
+        "symptoms",
         "workflow-guidance",
-        "parts",
-        "safety",
+        "contradictions",
+        "supersessions",
         "source-index",
         "_manifests",
         "_sources",
         "_publish-log",
     }
 )
-REQUIRED_FRONTMATTER_FIELDS = frozenset(
+DIGEST_DIRECTORY_TO_TYPE = {
+    "controllers": "controller",
+    "fault-codes": "fault-code",
+    "symptoms": "symptom",
+    "workflow-guidance": "workflow-guidance",
+    "contradictions": "contradiction",
+    "supersessions": "supersession",
+}
+REQUIRED_DIGEST_FRONTMATTER_FIELDS = frozenset(
     {
         "title",
+        "digest_type",
+        "slug",
+        "status",
+        "source_documents",
+        "knowledge_record_ids",
+        "tags",
+        "cross_links",
         "generated_by",
         "publish_run",
-        "source_documents",
         "generated_at",
+        "extraction_version",
+        "compilation_version",
     }
 )
+REQUIRED_SOURCE_INDEX_FRONTMATTER_FIELDS = frozenset(
+    {
+        "title",
+        "doc_id",
+        "generated_by",
+        "publish_run",
+        "generated_at",
+        "source_documents",
+    }
+)
+PAGE_TYPE_REQUIRED_FIELDS = {
+    "controller": frozenset({"controller_models", "system_types"}),
+    "fault-code": frozenset({"fault_code", "controller_models"}),
+    "symptom": frozenset({"symptom_key", "system_types"}),
+    "workflow-guidance": frozenset({"workflow_key"}),
+    "contradiction": frozenset({"contradiction_key", "conflicting_pages", "resolution_status"}),
+    "supersession": frozenset({"superseded_slug", "replacement_slug", "reason"}),
+}
+REQUIRED_DIGEST_SECTIONS = (
+    "## Summary",
+    "## Field Guidance",
+    "## Source Citations",
+    "## Related Pages",
+)
+ALLOWED_STATUS_VALUES = frozenset({"draft", "approved", "superseded"})
 
 
 class ValidationReport(BaseModel):
@@ -87,13 +126,7 @@ def validate_publish_output(publish_dir: str | Path) -> ValidationReport:
             continue
         assert frontmatter is not None
 
-        source_documents = _source_documents(frontmatter)
-        errors.extend(_validate_common_frontmatter(relative_to_publish, frontmatter))
-        errors.extend(_validate_slug_conventions(relative_to_publish, frontmatter))
-
-        if not source_documents:
-            errors.append(f"{relative_to_publish.as_posix()}: source_documents must contain at least one entry")
-            continue
+        errors.extend(_validate_markdown_page(relative_to_publish, markdown_path, frontmatter))
 
         identity = _canonical_identity(relative_to_publish, frontmatter)
         prior_path = canonical_identities.get(identity)
@@ -111,18 +144,205 @@ def validate_publish_output(publish_dir: str | Path) -> ValidationReport:
     return ValidationReport(valid=not errors, errors=errors, warnings=warnings)
 
 
-def _source_documents(frontmatter: dict[str, object]) -> list[dict[str, str]]:
+def _validate_markdown_page(relative_path: Path, markdown_path: Path, frontmatter: dict[str, object]) -> list[str]:
+    root_dir = relative_path.parts[0]
+    if root_dir == "source-index":
+        return _validate_source_index_page(relative_path, frontmatter)
+    return _validate_digest_page(relative_path, markdown_path, frontmatter)
+
+
+def _validate_digest_page(relative_path: Path, markdown_path: Path, frontmatter: dict[str, object]) -> list[str]:
+    errors: list[str] = []
+    missing = sorted(field for field in REQUIRED_DIGEST_FRONTMATTER_FIELDS if field not in frontmatter)
+    if missing:
+        errors.append(f"{relative_path.as_posix()}: missing required frontmatter fields {missing}")
+
+    expected_digest_type = DIGEST_DIRECTORY_TO_TYPE.get(relative_path.parts[0])
+    digest_type = frontmatter.get("digest_type")
+    if digest_type != expected_digest_type:
+        errors.append(
+            f"{relative_path.as_posix()}: digest_type must be '{expected_digest_type}' "
+            f"for directory '{relative_path.parts[0]}'"
+        )
+
+    errors.extend(_validate_common_generated_fields(relative_path, frontmatter))
+    errors.extend(_validate_slug_and_filename(relative_path, frontmatter))
+    errors.extend(_validate_status(relative_path, frontmatter))
+    errors.extend(_validate_digest_source_documents(relative_path, frontmatter))
+    errors.extend(_validate_string_list_field(relative_path, frontmatter, "knowledge_record_ids"))
+    errors.extend(_validate_string_list_field(relative_path, frontmatter, "tags"))
+    errors.extend(_validate_string_list_field(relative_path, frontmatter, "cross_links"))
+
+    required_page_type_fields = PAGE_TYPE_REQUIRED_FIELDS.get(str(digest_type), frozenset())
+    missing_page_type_fields = sorted(field for field in required_page_type_fields if field not in frontmatter)
+    if missing_page_type_fields:
+        errors.append(f"{relative_path.as_posix()}: missing page-type frontmatter fields {missing_page_type_fields}")
+
+    errors.extend(_validate_required_sections(relative_path, markdown_path))
+    return errors
+
+
+def _validate_source_index_page(relative_path: Path, frontmatter: dict[str, object]) -> list[str]:
+    errors: list[str] = []
+    missing = sorted(field for field in REQUIRED_SOURCE_INDEX_FRONTMATTER_FIELDS if field not in frontmatter)
+    if missing:
+        errors.append(f"{relative_path.as_posix()}: missing required frontmatter fields {missing}")
+
+    errors.extend(_validate_common_generated_fields(relative_path, frontmatter))
+
+    doc_id = frontmatter.get("doc_id")
+    if not isinstance(doc_id, str) or relative_path.stem != doc_id:
+        errors.append(f"{relative_path.as_posix()}: source-index filename must match frontmatter doc_id")
+
+    source_documents = _source_documents(frontmatter)
+    if not source_documents:
+        errors.append(f"{relative_path.as_posix()}: source_documents must contain at least one entry")
+        return errors
+
+    matching_entry = next((entry for entry in source_documents if entry.get("doc_id") == doc_id), None)
+    if matching_entry is None:
+        errors.append(f"{relative_path.as_posix()}: source_documents must include an entry matching frontmatter doc_id")
+        return errors
+    for field in ("revision", "manufacturer", "family"):
+        value = matching_entry.get(field)
+        if not isinstance(value, str) or not value.strip():
+            errors.append(f"{relative_path.as_posix()}: source-index source_documents entry missing '{field}'")
+    return errors
+
+
+def _validate_common_generated_fields(relative_path: Path, frontmatter: dict[str, object]) -> list[str]:
+    errors: list[str] = []
+    generated_by = frontmatter.get("generated_by")
+    if generated_by != "knowledge-forge":
+        errors.append(f"{relative_path.as_posix()}: generated_by must be 'knowledge-forge'")
+    generated_at = frontmatter.get("generated_at")
+    if not isinstance(generated_at, str) or not generated_at.endswith("Z"):
+        errors.append(f"{relative_path.as_posix()}: generated_at must be an ISO-8601 UTC timestamp")
+    publish_run = frontmatter.get("publish_run")
+    if not isinstance(publish_run, str) or not publish_run.strip():
+        errors.append(f"{relative_path.as_posix()}: publish_run must be a non-empty string")
+    return errors
+
+
+def _validate_slug_and_filename(relative_path: Path, frontmatter: dict[str, object]) -> list[str]:
+    errors: list[str] = []
+    slug = frontmatter.get("slug")
+    if not isinstance(slug, str) or not slug.strip():
+        errors.append(f"{relative_path.as_posix()}: slug must be a non-empty string")
+        return errors
+    if slug != slugify(slug):
+        errors.append(f"{relative_path.as_posix()}: slug must be lowercase hyphen-separated")
+    if relative_path.stem != slug:
+        errors.append(f"{relative_path.as_posix()}: filename must match frontmatter slug")
+    bucket_id = frontmatter.get("bucket_id")
+    if isinstance(bucket_id, str) and bucket_id.strip():
+        expected_slug = _expected_bucket_slug(bucket_id=bucket_id, digest_type=frontmatter.get("digest_type"))
+        if expected_slug is not None and slug != expected_slug:
+            errors.append(
+                f"{relative_path.as_posix()}: slug must match bucket-derived pattern '{expected_slug}' "
+                f"for digest_type '{frontmatter.get('digest_type')}'"
+            )
+        elif frontmatter.get("digest_type") == "workflow-guidance" and not slug.startswith(f"{slugify(bucket_id)}-"):
+            errors.append(
+                f"{relative_path.as_posix()}: workflow-guidance slug must start with "
+                f"'{slugify(bucket_id)}-' when bucket_id is present"
+            )
+    return errors
+
+
+def _validate_status(relative_path: Path, frontmatter: dict[str, object]) -> list[str]:
+    status = frontmatter.get("status")
+    if status not in ALLOWED_STATUS_VALUES:
+        return [f"{relative_path.as_posix()}: status must be one of {sorted(ALLOWED_STATUS_VALUES)}"]
+    return []
+
+
+def _validate_digest_source_documents(relative_path: Path, frontmatter: dict[str, object]) -> list[str]:
+    errors: list[str] = []
+    source_documents = _source_documents(frontmatter)
+    if not source_documents:
+        errors.append(f"{relative_path.as_posix()}: source_documents must contain at least one entry")
+        return errors
+
+    for index, entry in enumerate(source_documents):
+        title = entry.get("title")
+        locator = entry.get("locator")
+        if not isinstance(title, str) or not title.strip():
+            errors.append(f"{relative_path.as_posix()}: source_documents[{index}] missing title")
+        if not isinstance(locator, str) or not locator.strip():
+            errors.append(f"{relative_path.as_posix()}: source_documents[{index}] missing locator")
+        if "attachment_id" not in entry:
+            errors.append(f"{relative_path.as_posix()}: source_documents[{index}] missing attachment_id key")
+    return errors
+
+
+def _validate_string_list_field(relative_path: Path, frontmatter: dict[str, object], field_name: str) -> list[str]:
+    payload = frontmatter.get(field_name)
+    if not isinstance(payload, list):
+        return [f"{relative_path.as_posix()}: {field_name} must be a list"]
+    errors: list[str] = []
+    for index, value in enumerate(payload):
+        if not isinstance(value, str) or not value.strip():
+            errors.append(f"{relative_path.as_posix()}: {field_name}[{index}] must be a non-empty string")
+    return errors
+
+
+def _expected_bucket_slug(*, bucket_id: str, digest_type: object) -> str | None:
+    bucket_slug = slugify(bucket_id)
+    if digest_type == "controller":
+        return f"{bucket_slug}-controller-digest"
+    if digest_type == "fault-code":
+        return f"{bucket_slug}-alarm-reference"
+    if digest_type == "symptom":
+        return f"{bucket_slug}-troubleshooting"
+    if digest_type == "contradiction":
+        return bucket_slug
+    return None
+
+
+def _validate_required_sections(relative_path: Path, markdown_path: Path) -> list[str]:
+    payload = markdown_path.read_text(encoding="utf-8")
+    body = _markdown_body(payload)
+    positions: list[int] = []
+    errors: list[str] = []
+    for heading in REQUIRED_DIGEST_SECTIONS:
+        marker = f"\n{heading}\n"
+        position = body.find(marker)
+        if position == -1 and body.startswith(f"{heading}\n"):
+            position = 0
+        if position == -1:
+            errors.append(f"{relative_path.as_posix()}: missing required section '{heading}'")
+            continue
+        positions.append(position)
+    if len(positions) == len(REQUIRED_DIGEST_SECTIONS) and positions != sorted(positions):
+        errors.append(
+            f"{relative_path.as_posix()}: required sections must appear in order {list(REQUIRED_DIGEST_SECTIONS)}"
+        )
+    return errors
+
+
+def _markdown_body(payload: str) -> str:
+    lines = payload.splitlines(keepends=True)
+    if not lines or lines[0].rstrip("\r\n") != "---":
+        return payload
+    closing_index = next(
+        (index for index, line in enumerate(lines[1:], start=1) if line.rstrip("\r\n") == "---"),
+        None,
+    )
+    if closing_index is None:
+        return payload
+    return "".join(lines[closing_index + 1 :]).lstrip("\r\n")
+
+
+def _source_documents(frontmatter: dict[str, object]) -> list[dict[str, object]]:
     payload = frontmatter.get("source_documents")
     if not isinstance(payload, list):
         return []
-    documents: list[dict[str, str]] = []
+    documents: list[dict[str, object]] = []
     for entry in payload:
         if not isinstance(entry, dict):
             continue
-        doc_id = entry.get("doc_id")
-        if not isinstance(doc_id, str) or not doc_id:
-            continue
-        documents.append({key: str(value) for key, value in entry.items() if value is not None})
+        documents.append({str(key): value for key, value in entry.items()})
     return documents
 
 
@@ -149,77 +369,13 @@ def _load_frontmatter(path: Path) -> tuple[dict[str, object] | None, list[str]]:
     return parsed, []
 
 
-def _validate_common_frontmatter(relative_path: Path, frontmatter: dict[str, object]) -> list[str]:
-    errors: list[str] = []
-    missing = sorted(field for field in REQUIRED_FRONTMATTER_FIELDS if field not in frontmatter)
-    if missing:
-        errors.append(f"{relative_path.as_posix()}: missing required frontmatter fields {missing}")
-    generated_by = frontmatter.get("generated_by")
-    if generated_by != "knowledge-forge":
-        errors.append(f"{relative_path.as_posix()}: generated_by must be 'knowledge-forge'")
-    source_documents = frontmatter.get("source_documents")
-    if not isinstance(source_documents, list):
-        errors.append(f"{relative_path.as_posix()}: source_documents must be a list")
-    generated_at = frontmatter.get("generated_at")
-    if not isinstance(generated_at, str) or not generated_at.endswith("Z"):
-        errors.append(f"{relative_path.as_posix()}: generated_at must be an ISO-8601 UTC timestamp")
-    publish_run = frontmatter.get("publish_run")
-    if not isinstance(publish_run, str) or not publish_run.strip():
-        errors.append(f"{relative_path.as_posix()}: publish_run must be a non-empty string")
-    return errors
-
-
-def _validate_slug_conventions(relative_path: Path, frontmatter: dict[str, object]) -> list[str]:
-    errors: list[str] = []
-    root_dir = relative_path.parts[0]
-    if root_dir == "source-index":
-        doc_id = frontmatter.get("doc_id")
-        if not isinstance(doc_id, str) or relative_path.stem != doc_id:
-            errors.append(f"{relative_path.as_posix()}: source-index filename must match frontmatter doc_id")
-        return errors
-
-    if root_dir == "manufacturers":
-        source_documents = _source_documents(frontmatter)
-        if not source_documents:
-            return errors
-        manufacturer_slug = slugify(source_documents[0].get("manufacturer", ""))
-        if len(relative_path.parts) >= 2 and relative_path.parts[1] != manufacturer_slug:
-            errors.append(
-                f"{relative_path.as_posix()}: manufacturer path slug must match source_documents manufacturer"
-            )
-        if len(relative_path.parts) >= 3 and relative_path.parts[2] != "_index.md":
-            family_value = frontmatter.get("family")
-            if not isinstance(family_value, str) or not family_value.strip():
-                family_value = source_documents[0].get("family", "")
-            family_slug = slugify(family_value)
-            if relative_path.parts[2] != family_slug:
-                errors.append(
-                    f"{relative_path.as_posix()}: family path slug must match frontmatter family "
-                    f"when provided, otherwise source_documents family"
-                )
-        return errors
-
-    bucket_id = frontmatter.get("bucket_id")
-    if isinstance(bucket_id, str) and bucket_id:
-        expected_prefix = slugify(bucket_id)
-        if not relative_path.stem.startswith(expected_prefix):
-            errors.append(f"{relative_path.as_posix()}: filename must start with bucket slug '{expected_prefix}'")
-    return errors
-
-
 def _canonical_identity(relative_path: Path, frontmatter: dict[str, object]) -> str:
-    explicit_identity = frontmatter.get("canonical_identity")
-    if isinstance(explicit_identity, str) and explicit_identity:
-        return explicit_identity
-
     root_dir = relative_path.parts[0]
     if root_dir == "source-index":
         return f"source:{frontmatter.get('doc_id', relative_path.stem)}"
-    bucket_id = frontmatter.get("bucket_id")
-    topic = frontmatter.get("topic")
-    if isinstance(bucket_id, str) and isinstance(topic, str):
-        return f"{root_dir}:{bucket_id}:{topic}"
-    return f"{root_dir}:{relative_path.with_suffix('').as_posix()}"
+    digest_type = frontmatter.get("digest_type", DIGEST_DIRECTORY_TO_TYPE.get(root_dir, root_dir))
+    slug = frontmatter.get("slug", relative_path.stem)
+    return f"digest:{digest_type}:{slug}"
 
 
 def _validate_publish_manifests(publish_root: Path, publish_history_root: Path) -> tuple[list[str], list[str]]:
@@ -258,6 +414,12 @@ def _validate_publish_manifests(publish_root: Path, publish_history_root: Path) 
                 errors.append(
                     f"{manifest_path.relative_to(publish_root).as_posix()}: manifest path escapes publish subtree "
                     f"({relative_file})"
+                )
+                continue
+            if PurePosixPath(relative_file).parts[0] not in ALLOWED_TARGET_DIRECTORIES:
+                errors.append(
+                    f"{manifest_path.relative_to(publish_root).as_posix()}: manifest path targets unrecognized "
+                    f"directory ({relative_file})"
                 )
 
         for removed_file in manifest.files_removed:
