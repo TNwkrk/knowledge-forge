@@ -10,6 +10,17 @@ This is both a GitHub workflow rule and a local working rule. Access to a
 local FlowCommander clone is for inspection and publish preparation, not for
 casual hand-edits from intermediate output.
 
+The published knowledge is the canonical approved reference substrate that
+FlowCommander's AI and product layer (Ask AI, retrieval, advisory,
+workflow-linked guidance) is built on top of. Markdown form is a deliberate
+property of that substrate so the pages stay reviewable, auditable, and
+inspectable in PR diffs and git history. Direct technician reading of these
+files is not the primary consumption path; technician-facing experiences are
+derived from the substrate through FlowCommander's product layer. Knowledge
+Forge should not optimize its output for "wiki archival completeness" — it
+should optimize for trustworthy AI/product consumption with preserved
+provenance.
+
 ## Authoritative target contract
 
 **The downstream shape is owned by FlowCommander, not Knowledge Forge.** The
