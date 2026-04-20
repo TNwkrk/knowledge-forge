@@ -488,6 +488,57 @@ def test_compile_topic_page_renders_citations_applicability_notes_and_conflicts(
     assert "Operating pressure: 15 PSI (startup mode) [Source: honeywell-dc1000-sop-rev-3, pp.30-31]" in rendered_specs
 
 
+def test_compile_alarm_reference_draft_synthesis_keeps_prose_when_citations_wrap(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    doc_id = _register_extracted_fixture(_write_pdf(tmp_path / "manual-alarm.pdf"), data_dir)
+    section_id = f"{doc_id}--alarm-reference--001"
+
+    _write_section(
+        data_dir,
+        doc_id,
+        section_id=section_id,
+        title="Alarm Reference",
+        section_type="troubleshooting",
+        page_range=(40, 41),
+    )
+    _write_record(
+        data_dir,
+        doc_id,
+        "alarm_definition",
+        f"{section_id}--alarm_definition--001",
+        {
+            **_base_record(doc_id, heading="Alarm Reference", start_page=40, end_page=41, confidence=0.92),
+            "extraction_version": "extraction/alarm_definition@v1:gpt-4o-mini",
+            "code": "RUN",
+            "description": "Indicates the controller is in run mode.",
+            "cause": "The controller is executing the user program.",
+            "remedy": "No action required if operation is normal.",
+            "severity": "info",
+        },
+    )
+
+    page = compile_topic_page(
+        "honeywell/dc1000/family",
+        "alarm_reference",
+        client=_FakeCompileClient(
+            "- **RUN** indicates the controller is executing the user program.\n"
+            "  [Source: honeywell-dc1000-service-manual-rev-3, pp.40-41]"
+        ),
+        data_dir=data_dir,
+    )
+
+    rendered = page.render()
+    draft_synthesis = rendered.split("## Draft Synthesis", 1)[1].split("## Source-backed Claims", 1)[0]
+
+    assert (
+        "- **RUN** indicates the controller is executing the user program. "
+        "[Source: honeywell-dc1000-service-manual-rev-3, pp.40-41]" in draft_synthesis
+    )
+    assert "## Source-backed Claims" in rendered
+    assert draft_synthesis.strip() != "[Source: honeywell-dc1000-service-manual-rev-3, pp.40-41]"
+    assert "\n  [Source:" not in draft_synthesis
+
+
 def test_render_contradiction_notes_generates_bucket_summary_page_and_cli(tmp_path: Path) -> None:
     data_dir = tmp_path / "data"
     service_doc_id = _register_extracted_fixture(
