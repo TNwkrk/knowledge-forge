@@ -794,10 +794,7 @@ def _echo_run_summary(run: object) -> None:
     click.echo(f"Status: {run.status.value}")
     click.echo(f"Documents: {', '.join(document.doc_id for document in run.documents)}")
     click.echo(f"Strategy: {run.scheduler.strategy.value}")
-    click.echo(
-        "Budgets: "
-        f"{run.scheduler.max_requests_per_minute} RPM / {run.scheduler.max_tokens_per_minute} TPM"
-    )
+    click.echo(f"Budgets: {run.scheduler.max_requests_per_minute} RPM / {run.scheduler.max_tokens_per_minute} TPM")
     click.echo(f"Items: {run.item_count}")
     click.echo(f"Pending: {counts['pending']}")
     click.echo(f"In progress: {counts['in_progress']}")
@@ -813,10 +810,7 @@ def _echo_run_summary(run: object) -> None:
         f"direct={run.metrics.direct_dispatch_count} batch={run.metrics.batch_dispatch_count} "
         f"fallback={run.metrics.fallback_dispatch_count}"
     )
-    click.echo(
-        "Throttle: "
-        f"{run.metrics.throttle_seconds:.2f}s total, 429s={run.metrics.rate_limit_429_count}"
-    )
+    click.echo(f"Throttle: {run.metrics.throttle_seconds:.2f}s total, 429s={run.metrics.rate_limit_429_count}")
 
 
 def _load_inference_config_with_overrides(
