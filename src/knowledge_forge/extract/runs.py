@@ -713,8 +713,7 @@ def _execute_batch_strategy(
             break
 
         prepared_items = [
-            _prepare_scheduled_item(run, index=index, client=client, data_dir=data_dir)
-            for index in pending_indexes
+            _prepare_scheduled_item(run, index=index, client=client, data_dir=data_dir) for index in pending_indexes
         ]
         batch_model = prepared_items[0].selected_model
         chunk: list[_PreparedScheduledItem] = []
