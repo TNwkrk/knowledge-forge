@@ -2,11 +2,28 @@
 
 ## Overview
 
-This document defines the boundary between Knowledge Forge and FlowCommander. Knowledge Forge never directly mutates FlowCommander. All output flows through a staged publish step that opens a pull request for human review.
+This document defines the boundary between Knowledge Forge and FlowCommander.
+Knowledge Forge never directly mutates FlowCommander. All output flows through
+a staged publish step that opens a pull request for human review.
 
-This is both a GitHub workflow rule and a local working rule. Access to a local
-FlowCommander clone is for inspection and publish preparation, not for casual
-hand-edits from intermediate output.
+This is both a GitHub workflow rule and a local working rule. Access to a
+local FlowCommander clone is for inspection and publish preparation, not for
+casual hand-edits from intermediate output.
+
+## Authoritative target contract
+
+**The downstream shape is owned by FlowCommander, not Knowledge Forge.** The
+canonical contract for directory layout, frontmatter, and body structure of
+published pages lives in the FlowCommander repo at:
+
+`docs/knowledge-forge-publish-contract.md` in `TNwkrk/FlowCommander`
+
+Local reference path when the downstream clone is available:
+`/Users/taylor/development/FlowCommander/docs/knowledge-forge-publish-contract.md`
+
+Knowledge Forge conforms to that contract. This document summarizes the
+implications for this repository and must stay aligned with the FlowCommander
+contract. If the two drift, the FlowCommander contract wins.
 
 ## Target repository
 
@@ -14,184 +31,148 @@ hand-edits from intermediate output.
 - **Branch:** PRs are opened against the default branch
 - **Subtree:** `repo-wiki/knowledge/`
 
-Knowledge Forge only writes inside `repo-wiki/knowledge/`. It never touches any other FlowCommander path.
-
-## Local downstream reference
-
-When available, the expected local downstream reference clone is:
-
-`/Users/taylor/development/FlowCommander`
-
-Agents may use that local clone to:
-- inspect current `repo-wiki/knowledge/` structure
-- compare staged output against downstream expectations
-- prepare or validate PR-ready artifact sets
-
-Agents should not treat the local clone as a scratchpad for unreviewed output.
-The publish boundary remains a FlowCommander PR.
+Knowledge Forge only writes inside `repo-wiki/knowledge/`. It never touches
+any other FlowCommander path.
 
 ## Target folder structure
+
+The downstream target is the FlowCommander digest-type taxonomy:
 
 ```
 repo-wiki/
   knowledge/
-    manufacturers/
-      {manufacturer_slug}/
-        _index.md                    # manufacturer overview
-        {family_slug}/
-          _index.md                  # family overview
-          {model_slug}/
-            _index.md                # model overview
-    procedures/
-      {procedure_slug}.md            # compiled procedure pages (startup, shutdown, PM, seasonal)
-    specs/
-      {spec_slug}.md                 # compiled spec pages
-    troubleshooting/
-      {topic_slug}.md                # compiled troubleshooting pages
-    workflow-guidance/
-      {workflow_slug}.md             # SOPs, checklists, seasonal procedures, best practices
-    parts/
-      {parts_slug}.md                # compiled parts and BOM pages
-    safety/
-      {safety_slug}.md               # safety procedures, LOTO guidance, permit references
-    source-index/
-      {doc_id}.md                    # one page per source document
-    _manifests/
-      {publish_run_id}.json          # publish manifest for this run
-    _sources/
-      {doc_id}.json                  # source metadata snapshot
-    _publish-log/
-      {publish_run_id}.json          # log of what was published and when
+    controllers/              # controller family / model field guidance
+    fault-codes/              # panel indicators and alarm-code references
+    symptoms/                 # symptom-first troubleshooting pages
+    workflow-guidance/        # SOPs, PM, startup/shutdown, seasonal procedures
+    contradictions/           # contradiction pages with competing claims
+    supersessions/            # supersession notices
+    source-index/             # one provenance page per source document
+    _manifests/               # {publish_run_id}.json per run
+    _publish-log/             # append-only publish log per run
+    _sources/                 # per-source metadata snapshots
 ```
 
-Note: The FlowCommander downstream repo-wiki also uses a digest-type oriented
-taxonomy (`controllers/`, `fault-codes/`, `symptoms/`, `workflow-guidance/`,
-`contradictions/`, `supersessions/`). Knowledge Forge should produce output that
-fits both its own document-centered provenance structure above and the
-FlowCommander digest-type structure. The same extracted record graph can compile
-into both page types.
+> **Deprecated internal taxonomy.** Earlier iterations of this document
+> described a `manufacturers/`, `procedures/`, `specs/`, `troubleshooting/`,
+> `parts/`, `safety/` target layout. That taxonomy is a **compile-stage
+> intermediate under `data/compiled/`, not a publish target.** The publish
+> stage must re-compile into the digest-type directories above. See the
+> FlowCommander contract for the mapping (for example: procedure records →
+> `workflow-guidance/`; alarm definitions → `fault-codes/`; troubleshooting
+> entries → `symptoms/`; spec values fold into the relevant `controllers/`
+> page).
 
 ## Slug conventions
 
-- Lowercase, hyphen-separated: `honeywell`, `grundfos-cr-series`
+- Lowercase, hyphen-separated
 - Derived from manifest fields, not invented
 - Stable across reruns (same input → same slug)
 
 ## File format
 
-All published Markdown files include YAML frontmatter:
+Auto-generated Markdown files include YAML frontmatter conforming to the
+FlowCommander digest schema plus the Knowledge Forge provenance fields:
 
 ```yaml
 ---
-title: "Page Title"
+title: "Human readable title"
+digest_type: controller | fault-code | symptom | workflow-guidance | contradiction | supersession
+slug: stable-slug
+status: draft | approved | superseded
+source_documents:
+  - title: "Source document title"
+    attachment_id: "uuid-or-null"
+    locator: "page 12, section 4.3"
+knowledge_record_ids: []
+tags: []
+cross_links: []
 generated_by: knowledge-forge
 publish_run: "{publish_run_id}"
-source_documents:
-  - doc_id: "{doc_id}"
-    revision: "{revision}"
-    manufacturer: "{manufacturer}"
-    family: "{family}"
-generated_at: "2024-01-15T10:30:00Z"
+generated_at: "2026-01-15T10:30:00Z"
 extraction_version: "{version}"
 compilation_version: "{version}"
+# plus page-type specific add-ons: controller_models, fault_code, symptom_key,
+# workflow_key, contradiction_key, superseded_slug, replacement_slug, etc.
 ---
 ```
 
-Published output should also preserve enough provenance to explain:
-- which source documents contributed to the page
-- which Knowledge Forge publish run produced the page
-- what changed relative to the staged publish set
+Digest body sections, in order:
+
+1. `## Summary`
+2. `## Field Guidance`
+3. `## Source Citations`
+4. `## Related Pages`
+
+Source-index pages follow the source-index frontmatter defined in the
+FlowCommander contract.
 
 ## Publish manifest
 
-Each publish run produces a manifest at `_manifests/{publish_run_id}.json`:
+Each publish run produces `_manifests/{publish_run_id}.json`:
 
 ```json
 {
-  "publish_run_id": "kf-20240115-001",
-  "generated_at": "2024-01-15T10:30:00Z",
-  "knowledge_forge_version": "0.1.0",
+  "publish_run_id": "kf-YYYYMMDD-NNN",
+  "generated_at": "2026-01-15T10:30:00Z",
+  "knowledge_forge_version": "x.y.z",
   "source_documents": ["doc-001", "doc-002"],
-  "buckets": ["honeywell/dc1000"],
-  "files_written": [
-    "manufacturers/honeywell/dc1000/_index.md",
-    "source-index/doc-001.md"
-  ],
+  "buckets": ["bucket-id"],
+  "files_written": ["controllers/allen-bradley-controllogix-family.md"],
   "files_updated": [],
   "files_removed": [],
-  "extraction_version": "0.1.0",
-  "compilation_version": "0.1.0"
+  "extraction_version": "...",
+  "compilation_version": "..."
 }
 ```
 
 ## PR conventions
 
-### Branch naming
-
-```
-knowledge-forge/{publish_run_id}
-```
-
-Example: `knowledge-forge/kf-20240115-001`
-
-### PR title
-
-```
-[Knowledge Forge] Publish {bucket_description}
-```
-
-Example: `[Knowledge Forge] Publish Honeywell DC1000 service manual extraction`
-
-### PR body
-
-The PR body includes:
-- Summary of what was processed
-- List of source documents
-- Count of new, updated, and removed files
-- Link back to the publish manifest
-- Any warnings (low confidence, contradiction candidates)
-- A clear note that the content was generated in Knowledge Forge and is being
-  proposed to FlowCommander for review
-
-### Labels
-
-PRs are labeled with:
-- `knowledge-forge`
-- `auto-generated`
+- Branch: `knowledge-forge/{publish_run_id}`
+- Title: `[Knowledge Forge] Publish {bucket_description}`
+- Labels: `knowledge-forge`, `auto-generated`
+- Body: summary, source documents, counts of new/updated/removed files, link
+  to the publish manifest, any warnings
 
 ## Validation rules
 
 Before opening a PR, the publish workflow validates:
 
-1. **Scoped output** — all files are under `repo-wiki/knowledge/`
-2. **No orphan removals** — files are only removed if they were previously published by Knowledge Forge (tracked via publish manifests)
-3. **Frontmatter present** — every Markdown file has valid YAML frontmatter with required fields
-4. **Slug stability** — slugs match the expected derivation from manifest fields
-5. **No duplication** — no two files claim the same canonical identity
-6. **Provenance retained** — manifests and metadata are sufficient for reviewers
-   to trace generated output back to source inputs
+1. All files under `repo-wiki/knowledge/`
+2. Only the allowed directories listed above are used
+3. Digest pages include all required frontmatter (schema fields + generated-by
+   provenance fields + page-type add-ons)
+4. Digest pages include the four required body sections in order
+5. Slugs match expected derivation from manifest fields
+6. No two files claim the same canonical identity
+7. `files_removed` paths were previously published by Knowledge Forge
+8. Pages without `generated_by: knowledge-forge` are not overwritten
 
 ## Rollback guidance
 
 If a published PR needs to be reverted:
 
 1. Revert the merge commit in FlowCommander
-2. The publish log in `_publish-log/` records exactly what was added, updated, or removed
-3. Knowledge Forge can re-publish from the same or corrected extraction by creating a new publish run
+2. `_publish-log/` records exactly what was added, updated, or removed
+3. Re-publish from the same or corrected extraction by creating a new
+   publish run
 
 ## Idempotency
 
-Re-running the publish workflow for the same extraction outputs produces the same PR content. Publish run IDs are unique, but file content is deterministic given the same extraction input.
+Re-running publish for the same extraction outputs produces identical file
+content. Publish run IDs are unique; file contents are deterministic given the
+same extraction input.
 
-## Future considerations
+## Current implementation gap
 
-- Automated PR approval workflows based on confidence thresholds
-- Webhook notification to FlowCommander on publish
-- Supabase sync after PR merge (owned by FlowCommander, not Knowledge Forge)
+The code under `src/knowledge_forge/publish/` and `src/knowledge_forge/compile/`
+currently implements the deprecated internal taxonomy
+(`manufacturers/procedures/specs/troubleshooting/...`). Bringing stage.py,
+validate.py, and the compile stage into conformance with this contract is
+tracked by the issue stack that blocks the full Rockwell rerun:
 
-## Current scope note
+- Issue #96 — align publish output with the FlowCommander digest schema
+- Issue #85 — end-to-end Rockwell rerun (blocked by #96)
 
-This contract defines the intended workflow boundary now, even before full
-publish automation exists in the repository. Until that automation lands,
-contributors and agents should use it as the governing model for any
-FlowCommander-facing staging or planning work.
+Until #96 closes, `kf publish validate` validates against the internal
+taxonomy and is not a substitute for downstream-shape validation.
