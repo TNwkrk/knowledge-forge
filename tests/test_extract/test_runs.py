@@ -18,6 +18,7 @@ from knowledge_forge.extract.runs import (
     load_extraction_run,
     resume_extraction_run,
     retry_failed_extraction_run,
+    save_extraction_run,
 )
 from knowledge_forge.inference.config import ExtractionStrategy
 from knowledge_forge.intake.importer import RegistrationRequest, load_manifest, register_document
@@ -318,6 +319,27 @@ def test_scheduler_enforces_rolling_token_budget_before_dispatch(monkeypatch, tm
     assert execution.run.metrics.estimated_tokens_dispatched == 120
 
 
+def test_scheduler_fails_fast_when_single_dispatch_exceeds_token_budget(monkeypatch, tmp_path: Path) -> None:
+    data_dir, doc_id = _make_run_fixture(tmp_path)
+    config = _FakeConfig(max_tokens_per_minute=50)
+    monkeypatch.setattr("knowledge_forge.extract.runs.InferenceClient", _FingerprintOnlyClient)
+    monkeypatch.setattr("knowledge_forge.extract.runs._estimate_total_tokens", lambda *_args, **_kwargs: 60)
+    run = create_extraction_run([doc_id], config=config, data_dir=data_dir)
+    sleeps: list[float] = []
+
+    monkeypatch.setattr("knowledge_forge.extract.runs.time.sleep", lambda seconds: sleeps.append(seconds))
+    execution = execute_extraction_run(run.run_id, config=config, data_dir=data_dir)
+    failed_items = {item.record_type: item for item in execution.run.items}
+
+    assert execution.run.status == ExtractionRunStatus.COMPLETED_WITH_FAILURES
+    assert all(item.status == ExtractionRunItemStatus.FAILED for item in failed_items.values())
+    assert all(
+        "exceeding configured max_tokens_per_minute=50" in (item.last_error or "") for item in failed_items.values()
+    )
+    assert sleeps == []
+    assert execution.run.metrics.direct_dispatch_count == 0
+
+
 def test_shared_cooldown_on_429_retries_item_globally(monkeypatch, tmp_path: Path) -> None:
     data_dir, doc_id = _make_run_fixture(tmp_path)
     config = _FakeConfig()
@@ -364,6 +386,46 @@ def test_shared_cooldown_on_429_retries_item_globally(monkeypatch, tmp_path: Pat
     assert sleeps == [15.0]
     assert attempts["procedure"] == 2
     assert any(snapshot == {"procedure": "pending", "warning": "pending"} for snapshot in snapshots)
+
+
+def test_retry_failed_run_requeues_interrupted_in_progress_items(monkeypatch, tmp_path: Path) -> None:
+    data_dir, doc_id = _make_run_fixture(tmp_path)
+    config = _FakeConfig()
+    monkeypatch.setattr("knowledge_forge.extract.runs.InferenceClient", _FingerprintOnlyClient)
+    run = create_extraction_run([doc_id], config=config, data_dir=data_dir)
+
+    def interrupting_execute_work_item(**kwargs):
+        item = _load_item(run.run_id, kwargs["record_type"], data_dir=data_dir)
+        if item.record_type == "procedure":
+            return _succeeded_result(item)
+        raise RuntimeError("simulated interruption")
+
+    monkeypatch.setattr("knowledge_forge.extract.runs.execute_work_item", interrupting_execute_work_item)
+
+    with pytest.raises(RuntimeError, match="simulated interruption"):
+        execute_extraction_run(run.run_id, config=config, data_dir=data_dir)
+
+    checkpointed = load_extraction_run(run.run_id, data_dir=data_dir)
+    assert {item.record_type: item.status for item in checkpointed.items} == {
+        "procedure": ExtractionRunItemStatus.SUCCEEDED,
+        "warning": ExtractionRunItemStatus.IN_PROGRESS,
+    }
+
+    retry_calls: list[str] = []
+
+    def retry_execute_work_item(**kwargs):
+        item = _load_item(run.run_id, kwargs["record_type"], data_dir=data_dir)
+        retry_calls.append(item.record_type)
+        return _succeeded_result(item)
+
+    monkeypatch.setattr("knowledge_forge.extract.runs.execute_work_item", retry_execute_work_item)
+    execution = retry_failed_extraction_run(run.run_id, config=config, data_dir=data_dir)
+    retried = load_extraction_run(run.run_id, data_dir=data_dir)
+
+    assert retry_calls == ["warning"]
+    assert execution.run.status == ExtractionRunStatus.COMPLETED
+    assert all(item.status == ExtractionRunItemStatus.SUCCEEDED for item in retried.items)
+    assert load_manifest(data_dir, doc_id).document.status == DocumentStatus.EXTRACTED
 
 
 def test_batch_strategy_is_explicit_and_counts_batch_dispatches(monkeypatch, tmp_path: Path) -> None:
@@ -436,3 +498,45 @@ def test_model_routing_rule_records_selected_model_and_fallback_usage(monkeypatc
     assert routed_items["warning"].selected_model == "gpt-4.1-mini"
     assert routed_items["warning"].fingerprint.model == "gpt-4.1-mini"
     assert execution.run.metrics.fallback_dispatch_count == 1
+
+
+def test_model_routing_retry_class_matches_429_message_variants(monkeypatch, tmp_path: Path) -> None:
+    data_dir, doc_id = _make_run_fixture(tmp_path)
+    rate_limit_fallback = SimpleNamespace(
+        model="gpt-4.1-mini",
+        record_types=["warning"],
+        section_types=[],
+        min_estimated_prompt_tokens=None,
+        max_estimated_prompt_tokens=None,
+        retry_class="rate_limit",
+    )
+    config = _FakeConfig(routing_rules=[rate_limit_fallback])
+    monkeypatch.setattr("knowledge_forge.extract.runs.InferenceClient", _FingerprintOnlyClient)
+    run = create_extraction_run([doc_id], config=config, data_dir=data_dir)
+    save_extraction_run(
+        run.model_copy(
+            update={
+                "items": [
+                    item.model_copy(update={"last_error": "HTTP 429 Too Many Requests"})
+                    if item.record_type == "warning"
+                    else item
+                    for item in run.items
+                ]
+            }
+        ),
+        data_dir=data_dir,
+    )
+
+    def routed_execute_work_item(**kwargs):
+        item = _load_item(run.run_id, kwargs["record_type"], data_dir=data_dir)
+        chosen_model = kwargs.get("model_override") or item.fingerprint.model
+        return replace(_succeeded_result(item), fingerprint=replace(item.fingerprint, model=chosen_model))
+
+    monkeypatch.setattr("knowledge_forge.extract.runs.execute_work_item", routed_execute_work_item)
+
+    execution = execute_extraction_run(run.run_id, config=config, data_dir=data_dir)
+    routed_items = {item.record_type: item for item in execution.run.items}
+
+    assert routed_items["procedure"].selected_model == "gpt-4o-mini"
+    assert routed_items["warning"].selected_model == "gpt-4.1-mini"
+    assert routed_items["warning"].fingerprint.model == "gpt-4.1-mini"

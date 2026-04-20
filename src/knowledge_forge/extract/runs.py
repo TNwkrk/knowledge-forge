@@ -186,6 +186,10 @@ class _PreparedScheduledItem(BaseModel):
     prepared: Any
 
 
+class _DispatchBudgetExceeded(ValueError):
+    """Raised when one scheduler dispatch can never fit within configured ceilings."""
+
+
 class _RollingBudget:
     """Rolling 60-second request/token window enforced before dispatch."""
 
@@ -434,6 +438,14 @@ def _prepare_run_for_execution(
                     "selected_model": current_fingerprint.model,
                 }
             )
+        elif item.status == ExtractionRunItemStatus.IN_PROGRESS:
+            item_update = item.model_copy(
+                update={
+                    "status": ExtractionRunItemStatus.PENDING,
+                    "last_error": None,
+                    "completed_at": None,
+                }
+            )
         elif retry_failed_only and item.status == ExtractionRunItemStatus.FAILED:
             item_update = item.model_copy(
                 update={
@@ -442,8 +454,6 @@ def _prepare_run_for_execution(
                     "completed_at": None,
                 }
             )
-        elif not retry_failed_only and item.status == ExtractionRunItemStatus.IN_PROGRESS:
-            item_update = item.model_copy(update={"status": ExtractionRunItemStatus.PENDING, "last_error": None})
         updated_items.append(item_update)
 
     scheduler = (
@@ -522,14 +532,26 @@ def _execute_direct_serial_strategy(
         index = pending_indexes[0]
         item = run.items[index]
         prepared_item = _prepare_scheduled_item(run, index=index, client=client, data_dir=data_dir)
-        run, cooldown_until = _wait_for_dispatch_window(
-            run,
-            requests=1,
-            tokens=prepared_item.estimated_total_tokens,
-            budget=budget,
-            cooldown_until=cooldown_until,
-            data_dir=data_dir,
-        )
+        try:
+            run, cooldown_until = _wait_for_dispatch_window(
+                run,
+                requests=1,
+                tokens=prepared_item.estimated_total_tokens,
+                budget=budget,
+                cooldown_until=cooldown_until,
+                data_dir=data_dir,
+            )
+        except _DispatchBudgetExceeded as exc:
+            run = _mark_item_failed_before_dispatch(
+                run,
+                index=index,
+                prepared_item=prepared_item,
+                dispatch_mode="direct",
+                error=str(exc),
+            )
+            save_extraction_run(run, data_dir=data_dir)
+            _sync_completed_document_statuses(run, data_dir=data_dir)
+            continue
         run = _mark_item_dispatched(
             run,
             prepared_item=prepared_item,
@@ -611,14 +633,26 @@ def _execute_direct_limited_strategy(
                 index = pending_indexes.popleft()
                 item = run.items[index]
                 prepared_item = _prepare_scheduled_item(run, index=index, client=client, data_dir=data_dir)
-                run, cooldown_until = _wait_for_dispatch_window(
-                    run,
-                    requests=1,
-                    tokens=prepared_item.estimated_total_tokens,
-                    budget=budget,
-                    cooldown_until=cooldown_until,
-                    data_dir=data_dir,
-                )
+                try:
+                    run, cooldown_until = _wait_for_dispatch_window(
+                        run,
+                        requests=1,
+                        tokens=prepared_item.estimated_total_tokens,
+                        budget=budget,
+                        cooldown_until=cooldown_until,
+                        data_dir=data_dir,
+                    )
+                except _DispatchBudgetExceeded as exc:
+                    run = _mark_item_failed_before_dispatch(
+                        run,
+                        index=index,
+                        prepared_item=prepared_item,
+                        dispatch_mode="direct",
+                        error=str(exc),
+                    )
+                    save_extraction_run(run, data_dir=data_dir)
+                    _sync_completed_document_statuses(run, data_dir=data_dir)
+                    continue
                 run = _mark_item_dispatched(
                     run,
                     prepared_item=prepared_item,
@@ -715,25 +749,31 @@ def _execute_batch_strategy(
         prepared_items = [
             _prepare_scheduled_item(run, index=index, client=client, data_dir=data_dir) for index in pending_indexes
         ]
-        batch_model = prepared_items[0].selected_model
-        chunk: list[_PreparedScheduledItem] = []
-        for prepared_item in prepared_items:
-            if prepared_item.selected_model != batch_model:
-                break
-            if len(chunk) >= run.scheduler.batch_chunk_size:
-                break
-            chunk.append(prepared_item)
+        chunk = _build_batch_chunk(run, prepared_items)
 
         batch_requests = len(chunk)
         batch_tokens = sum(item.estimated_total_tokens for item in chunk)
-        run, cooldown_until = _wait_for_dispatch_window(
-            run,
-            requests=batch_requests,
-            tokens=batch_tokens,
-            budget=budget,
-            cooldown_until=cooldown_until,
-            data_dir=data_dir,
-        )
+        try:
+            run, cooldown_until = _wait_for_dispatch_window(
+                run,
+                requests=batch_requests,
+                tokens=batch_tokens,
+                budget=budget,
+                cooldown_until=cooldown_until,
+                data_dir=data_dir,
+            )
+        except _DispatchBudgetExceeded as exc:
+            prepared_item = chunk[0]
+            run = _mark_item_failed_before_dispatch(
+                run,
+                index=prepared_item.item_index,
+                prepared_item=prepared_item,
+                dispatch_mode="batch",
+                error=str(exc),
+            )
+            save_extraction_run(run, data_dir=data_dir)
+            _sync_completed_document_statuses(run, data_dir=data_dir)
+            continue
 
         builder = BatchBuilder(client.config)
         schemas_by_custom_id: dict[str, dict[str, Any]] = {}
@@ -883,7 +923,7 @@ def _prepare_scheduled_item(
 ) -> _PreparedScheduledItem:
     item = run.items[index]
     section = _load_section(item.doc_id, item.section_id, data_dir=data_dir)
-    retry_class = "rate_limit" if item.last_error and "rate limit" in item.last_error.lower() else None
+    retry_class = _classify_retry_class(item.last_error)
     selected_model = _select_model_for_item(run, item=item, section=section, client=client, retry_class=retry_class)
     prepared = prepare_extraction_work_item(
         section=section,
@@ -938,6 +978,30 @@ def _mark_item_dispatched(
     )
 
 
+def _mark_item_failed_before_dispatch(
+    run: ExtractionRun,
+    *,
+    index: int,
+    prepared_item: _PreparedScheduledItem,
+    dispatch_mode: str,
+    error: str,
+) -> ExtractionRun:
+    item = run.items[index]
+    updated_item = item.model_copy(
+        update={
+            "status": ExtractionRunItemStatus.FAILED,
+            "last_error": error,
+            "completed_at": utc_now(),
+            "selected_model": prepared_item.selected_model,
+            "dispatch_mode": dispatch_mode,
+            "estimated_total_tokens": prepared_item.estimated_total_tokens,
+        }
+    )
+    items = list(run.items)
+    items[index] = updated_item
+    return _refresh_run_metrics(run.model_copy(update={"items": items, "updated_at": utc_now()}))
+
+
 def _wait_for_dispatch_window(
     run: ExtractionRun,
     *,
@@ -947,6 +1011,7 @@ def _wait_for_dispatch_window(
     cooldown_until: float,
     data_dir: Path,
 ) -> tuple[ExtractionRun, float]:
+    _validate_dispatch_budget(run, requests=requests, tokens=tokens)
     now = time.monotonic()
     budget_wait = budget.required_wait(
         now=now,
@@ -964,6 +1029,19 @@ def _wait_for_dispatch_window(
     save_extraction_run(run, data_dir=data_dir)
     time.sleep(wait_seconds)
     return run, max(cooldown_until, now + wait_seconds)
+
+
+def _validate_dispatch_budget(run: ExtractionRun, *, requests: int, tokens: int) -> None:
+    max_requests = run.scheduler.max_requests_per_minute
+    max_tokens = run.scheduler.max_tokens_per_minute
+    if requests > max_requests:
+        raise _DispatchBudgetExceeded(
+            f"dispatch requires {requests} requests, exceeding configured max_requests_per_minute={max_requests}"
+        )
+    if tokens > max_tokens:
+        raise _DispatchBudgetExceeded(
+            f"dispatch requires {tokens} tokens, exceeding configured max_tokens_per_minute={max_tokens}"
+        )
 
 
 def _apply_shared_cooldown(
@@ -1009,6 +1087,26 @@ def _record_throttle_time(run: ExtractionRun, delay_seconds: float, *, reason: s
 def _estimate_total_tokens(prompt: str, config: InferenceConfig, scheduler: ExtractionRunSchedulerSettings) -> int:
     estimated_prompt_tokens = max(int(len(prompt) / scheduler.token_estimate_chars_per_token), 1)
     return estimated_prompt_tokens + config.max_tokens
+
+
+def _build_batch_chunk(
+    run: ExtractionRun, prepared_items: list[_PreparedScheduledItem]
+) -> list[_PreparedScheduledItem]:
+    batch_model = prepared_items[0].selected_model
+    chunk: list[_PreparedScheduledItem] = []
+    chunk_tokens = 0
+    max_requests = min(run.scheduler.batch_chunk_size, run.scheduler.max_requests_per_minute)
+    for prepared_item in prepared_items:
+        if prepared_item.selected_model != batch_model:
+            break
+        if len(chunk) >= max_requests:
+            break
+        projected_tokens = chunk_tokens + prepared_item.estimated_total_tokens
+        if chunk and projected_tokens > run.scheduler.max_tokens_per_minute:
+            break
+        chunk.append(prepared_item)
+        chunk_tokens = projected_tokens
+    return chunk
 
 
 def _select_model_for_item(
@@ -1158,12 +1256,22 @@ def _is_rate_limit_error(error: Exception) -> bool:
         status_code = getattr(response, "status_code", None)
     if status_code == 429:
         return True
-    message = str(error).lower()
-    return "rate limit" in message or "429" in message
+    return _is_rate_limit_message(str(error))
 
 
 def _is_batch_rate_limit_failure(failure: BatchFailure) -> bool:
-    return failure.status_code == 429 or "rate limit" in failure.message.lower()
+    return failure.status_code == 429 or _is_rate_limit_message(failure.message)
+
+
+def _classify_retry_class(last_error: str | None) -> str | None:
+    if last_error and _is_rate_limit_message(last_error):
+        return "rate_limit"
+    return None
+
+
+def _is_rate_limit_message(message: str) -> bool:
+    lowered = message.lower()
+    return "rate limit" in lowered or "too many requests" in lowered or "429" in lowered
 
 
 def _next_run_id(data_dir: Path, *, today: date) -> str:
