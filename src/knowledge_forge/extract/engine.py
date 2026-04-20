@@ -24,6 +24,7 @@ from knowledge_forge.extract.repair import repair_extraction
 from knowledge_forge.extract.schemas import BucketContext, ExtractionSchemaModel, get_json_schema, get_schema_model
 from knowledge_forge.inference import InferenceClient
 from knowledge_forge.inference.config import InferenceConfig
+from knowledge_forge.inference.retry import RetryPolicy
 from knowledge_forge.inference.schema_validator import ValidationResult
 from knowledge_forge.intake.importer import get_data_dir, load_manifest
 from knowledge_forge.intake.manifest import DocumentStatus
@@ -127,6 +128,19 @@ class ExtractionWorkItemResult:
     output_paths: list[Path]
 
 
+@dataclass(frozen=True)
+class PreparedExtractionWorkItem:
+    """Prepared prompt/schema payload for one extraction work item."""
+
+    section: Section
+    record_type: str
+    template: PromptTemplate
+    schema: dict[str, object]
+    prompt: str
+    model: str
+    fingerprint: ExtractionFingerprint
+
+
 def extract_document(
     doc_id: str,
     *,
@@ -218,6 +232,39 @@ def extract_section(
     return extracted
 
 
+def prepare_extraction_work_item(
+    *,
+    section: Section,
+    record_type: str,
+    client: InferenceClient,
+    model_override: str | None = None,
+) -> PreparedExtractionWorkItem:
+    """Build the prompt/schema payload for one extraction work item."""
+    template = load_prompt_template(record_type)
+    if template.schema_ref != record_type:
+        raise ValueError(
+            f"prompt template schema_ref mismatch for record_type '{record_type}': got '{template.schema_ref}'"
+        )
+    schema = _record_list_schema(record_type)
+    prompt = render_prompt(template, section=section, record_type=record_type)
+    model = model_override or template.model or client.config.extraction_model
+    fingerprint = build_extraction_fingerprint(
+        section=section,
+        record_type=record_type,
+        model=model,
+        prompt_template=template,
+    )
+    return PreparedExtractionWorkItem(
+        section=section,
+        record_type=record_type,
+        template=template,
+        schema=schema,
+        prompt=prompt,
+        model=model,
+        fingerprint=fingerprint,
+    )
+
+
 def execute_work_item(
     *,
     section: Section,
@@ -230,111 +277,45 @@ def execute_work_item(
     parse_meta: ParseMetadata,
     bucket_context: list[BucketContext],
     pipeline_run_id: str | None = None,
+    model_override: str | None = None,
+    retry_policy: RetryPolicy | None = None,
 ) -> ExtractionWorkItemResult:
     """Execute one section/record-type extraction unit and persist safe outputs."""
-    template = load_prompt_template(record_type)
-    if template.schema_ref != record_type:
-        raise ValueError(
-            f"prompt template schema_ref mismatch for record_type '{record_type}': got '{template.schema_ref}'"
-        )
-    schema = _record_list_schema(record_type)
-    prompt = render_prompt(template, section=section, record_type=record_type)
-    model = template.model or client.config.extraction_model
-    fingerprint = build_extraction_fingerprint(
+    prepared = prepare_extraction_work_item(
         section=section,
         record_type=record_type,
-        model=model,
-        prompt_template=template,
+        client=client,
+        model_override=model_override,
     )
     attempt, failed_errors, failed_attempts = _extract_with_repair(
-        section=section,
-        record_type=record_type,
-        prompt=prompt,
-        template=template,
-        model=model,
-        schema=schema,
+        prepared=prepared,
         client=client,
         max_repair_attempts=max_repair_attempts,
         pipeline_run_id=pipeline_run_id,
+        retry_policy=retry_policy,
     )
     if attempt is None:
-        review_flag = ExtractionReviewFlag(
-            doc_id=section.doc_id,
-            section_id=section.section_id,
-            record_type=record_type,
-            reasons=["repair_failed"],
+        return build_failed_work_item_result(
+            prepared=prepared,
             min_confidence=min_confidence,
-            record_ids=[],
-            record_confidences=[],
-            repair_attempts=failed_attempts,
             errors=failed_errors,
-        )
-        save_review_flag(review_flag, data_dir=data_dir)
-        return ExtractionWorkItemResult(
-            doc_id=section.doc_id,
-            section_id=section.section_id,
-            record_type=record_type,
-            status="failed",
-            fingerprint=fingerprint,
-            records=[],
-            record_ids=[],
-            errors=failed_errors,
-            review_flag=review_flag,
             repair_attempts=failed_attempts,
-            output_paths=[],
+            data_dir=data_dir,
         )
-
-    records = _parse_records(attempt.parsed_json, record_type=record_type)
-    scored_records = apply_confidence_scores(
-        records,
+    return persist_work_item_result(
+        prepared=prepared,
+        parsed_json=attempt.parsed_json,
         validation=attempt.validation,
-        repaired=attempt.repaired,
-        section_quality=section_quality,
         output_tokens=attempt.output_tokens,
-        max_output_tokens=client.config.max_tokens,
-    )
-    records_with_provenance = [
-        attach_provenance(
-            record,
-            section,
-            parse_meta,
-            ExtractionMetadata(
-                model=model,
-                prompt_template=f"extraction/{record_type}",
-                prompt_version=template.version,
-                confidence=record.confidence,
-                bucket_context=bucket_context,
-            ),
-        )
-        for record in scored_records
-    ]
-    review_flag = build_review_flag(
-        section=section,
-        record_type=record_type,
-        records=records_with_provenance,
-        min_confidence=min_confidence,
+        repaired=attempt.repaired,
         repair_attempts=attempt.repair_attempts,
-        errors=attempt.repair_errors,
-    )
-    output_paths = save_records(
-        section=section,
-        record_type=record_type,
-        records=records_with_provenance,
+        repair_errors=attempt.repair_errors,
+        client=client,
         data_dir=data_dir,
-    )
-    sync_review_flag(review_flag, section=section, record_type=record_type, data_dir=data_dir)
-    return ExtractionWorkItemResult(
-        doc_id=section.doc_id,
-        section_id=section.section_id,
-        record_type=record_type,
-        status="succeeded",
-        fingerprint=fingerprint,
-        records=records_with_provenance,
-        record_ids=[path.stem for path in output_paths],
-        errors=[],
-        review_flag=review_flag,
-        repair_attempts=attempt.repair_attempts,
-        output_paths=output_paths,
+        section_quality=section_quality,
+        min_confidence=min_confidence,
+        parse_meta=parse_meta,
+        bucket_context=bucket_context,
     )
 
 
@@ -553,6 +534,113 @@ def sync_review_flag(
         rmtree(stage_dir, ignore_errors=True)
 
 
+def persist_work_item_result(
+    *,
+    prepared: PreparedExtractionWorkItem,
+    parsed_json: object,
+    validation: ValidationResult,
+    output_tokens: int,
+    repaired: bool,
+    repair_attempts: int,
+    repair_errors: list[str],
+    client: InferenceClient,
+    data_dir: Path,
+    section_quality: float,
+    min_confidence: float,
+    parse_meta: ParseMetadata,
+    bucket_context: list[BucketContext],
+) -> ExtractionWorkItemResult:
+    """Persist one successful extraction result using a prepared work item."""
+    records = _parse_records(parsed_json, record_type=prepared.record_type)
+    scored_records = apply_confidence_scores(
+        records,
+        validation=validation,
+        repaired=repaired,
+        section_quality=section_quality,
+        output_tokens=output_tokens,
+        max_output_tokens=client.config.max_tokens,
+    )
+    records_with_provenance = [
+        attach_provenance(
+            record,
+            prepared.section,
+            parse_meta,
+            ExtractionMetadata(
+                model=prepared.model,
+                prompt_template=f"extraction/{prepared.record_type}",
+                prompt_version=prepared.template.version,
+                confidence=record.confidence,
+                bucket_context=bucket_context,
+            ),
+        )
+        for record in scored_records
+    ]
+    review_flag = build_review_flag(
+        section=prepared.section,
+        record_type=prepared.record_type,
+        records=records_with_provenance,
+        min_confidence=min_confidence,
+        repair_attempts=repair_attempts,
+        errors=repair_errors,
+    )
+    output_paths = save_records(
+        section=prepared.section,
+        record_type=prepared.record_type,
+        records=records_with_provenance,
+        data_dir=data_dir,
+    )
+    sync_review_flag(review_flag, section=prepared.section, record_type=prepared.record_type, data_dir=data_dir)
+    return ExtractionWorkItemResult(
+        doc_id=prepared.section.doc_id,
+        section_id=prepared.section.section_id,
+        record_type=prepared.record_type,
+        status="succeeded",
+        fingerprint=prepared.fingerprint,
+        records=records_with_provenance,
+        record_ids=[path.stem for path in output_paths],
+        errors=[],
+        review_flag=review_flag,
+        repair_attempts=repair_attempts,
+        output_paths=output_paths,
+    )
+
+
+def build_failed_work_item_result(
+    *,
+    prepared: PreparedExtractionWorkItem,
+    min_confidence: float,
+    errors: list[str],
+    repair_attempts: int,
+    data_dir: Path,
+) -> ExtractionWorkItemResult:
+    """Persist review state for a failed extraction work item."""
+    review_flag = ExtractionReviewFlag(
+        doc_id=prepared.section.doc_id,
+        section_id=prepared.section.section_id,
+        record_type=prepared.record_type,
+        reasons=["repair_failed"],
+        min_confidence=min_confidence,
+        record_ids=[],
+        record_confidences=[],
+        repair_attempts=repair_attempts,
+        errors=errors,
+    )
+    save_review_flag(review_flag, data_dir=data_dir)
+    return ExtractionWorkItemResult(
+        doc_id=prepared.section.doc_id,
+        section_id=prepared.section.section_id,
+        record_type=prepared.record_type,
+        status="failed",
+        fingerprint=prepared.fingerprint,
+        records=[],
+        record_ids=[],
+        errors=errors,
+        review_flag=review_flag,
+        repair_attempts=repair_attempts,
+        output_paths=[],
+    )
+
+
 def _record_list_schema(record_type: str) -> dict[str, object]:
     record_schema = get_json_schema(record_type)
     return {
@@ -570,28 +658,25 @@ def _record_list_schema(record_type: str) -> dict[str, object]:
 
 def _extract_with_repair(
     *,
-    section: Section,
-    record_type: str,
-    prompt: str,
-    template: PromptTemplate,
-    model: str,
-    schema: dict[str, object],
+    prepared: PreparedExtractionWorkItem,
     client: InferenceClient,
     max_repair_attempts: int,
     pipeline_run_id: str | None = None,
+    retry_policy: RetryPolicy | None = None,
 ) -> tuple[ExtractionAttempt | None, list[str], int]:
     """Return ``(attempt, errors, repair_attempts)``; attempt is None on irrecoverable failure."""
-    prompt_template = f"extraction/{record_type}"
+    prompt_template = f"extraction/{prepared.record_type}"
     try:
         result = client.complete(
-            prompt=prompt,
-            system=template.system,
-            model=model,
-            schema=schema,
+            prompt=prepared.prompt,
+            system=prepared.template.system,
+            model=prepared.model,
+            schema=prepared.schema,
             prompt_template=prompt_template,
-            source_doc_id=section.doc_id,
-            source_section_id=section.section_id,
+            source_doc_id=prepared.section.doc_id,
+            source_section_id=prepared.section.section_id,
             pipeline_run_id=pipeline_run_id,
+            retry_policy=retry_policy,
         )
         return (
             ExtractionAttempt(
@@ -608,16 +693,17 @@ def _extract_with_repair(
     except ValueError as exc:
         repair = repair_extraction(
             str(exc),
-            schema,
-            prompt,
+            prepared.schema,
+            prepared.prompt,
             client=client,
-            system=template.system,
-            model=model,
+            system=prepared.template.system,
+            model=prepared.model,
             prompt_template=prompt_template,
-            source_doc_id=section.doc_id,
-            source_section_id=section.section_id,
+            source_doc_id=prepared.section.doc_id,
+            source_section_id=prepared.section.section_id,
             max_attempts=max_repair_attempts,
             pipeline_run_id=pipeline_run_id,
+            retry_policy=retry_policy,
         )
         if not repair.valid or repair.repaired_json is None:
             return (None, repair.errors, repair.attempts)

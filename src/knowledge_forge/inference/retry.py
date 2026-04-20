@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import random
+import re
 import time
 from collections.abc import Callable
 from typing import TypeVar
@@ -45,7 +46,8 @@ def retry_transient(
         except Exception as exc:
             if attempt >= resolved_policy.max_retries or not retryable(exc):
                 raise
-            sleep_fn(_next_delay(delay, resolved_policy, random_fn))
+            server_delay = suggested_delay_seconds(exc)
+            sleep_fn(max(_next_delay(delay, resolved_policy, random_fn), server_delay))
             delay = min(delay * resolved_policy.backoff_multiplier, resolved_policy.max_delay_seconds)
 
     raise RuntimeError("retry loop exited without returning or raising")
@@ -62,6 +64,16 @@ def is_transient_error(error: Exception) -> bool:
 
     message = str(error).lower()
     return any(token in message for token in {"timeout", "temporarily unavailable", "rate limit"})
+
+
+def suggested_delay_seconds(error: Exception) -> float:
+    """Extract provider retry-after hints from the error text when present."""
+    message = str(error).lower()
+    match = re.search(r"try again in ([0-9]+(?:\.[0-9]+)?)\s*(ms|s)\b", message)
+    if match is None:
+        return 0.0
+    value = float(match.group(1))
+    return value / 1000.0 if match.group(2) == "ms" else value
 
 
 def _next_delay(

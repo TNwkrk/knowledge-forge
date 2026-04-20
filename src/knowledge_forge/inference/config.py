@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+from enum import Enum
 from pathlib import Path
 from typing import Any
 
@@ -27,6 +28,48 @@ class BatchSettings(BaseModel):
     max_poll_duration_seconds: int = Field(gt=0)
 
 
+class ExtractionStrategy(str, Enum):
+    """Supported extraction scheduler execution strategies."""
+
+    BATCH = "batch"
+    DIRECT_SERIAL = "direct_serial"
+    DIRECT_LIMITED = "direct_limited"
+
+
+class ExtractionModelRouteRule(BaseModel):
+    """Explicit, reviewable routing rule for one extraction model choice."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    model: str = Field(min_length=1)
+    record_types: list[str] = Field(default_factory=list)
+    section_types: list[str] = Field(default_factory=list)
+    min_estimated_prompt_tokens: int | None = Field(default=None, ge=0)
+    max_estimated_prompt_tokens: int | None = Field(default=None, ge=0)
+    retry_class: str | None = None
+
+
+class ExtractionModelRoutingSettings(BaseModel):
+    """Model routing rules applied by the extraction run scheduler."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    rules: list[ExtractionModelRouteRule] = Field(default_factory=list)
+
+
+class ExtractionSettings(BaseModel):
+    """Scheduler settings for durable extraction runs."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    strategy: ExtractionStrategy = ExtractionStrategy.DIRECT_SERIAL
+    direct_concurrency: int = Field(default=1, gt=0)
+    batch_chunk_size: int = Field(default=25, gt=0)
+    token_estimate_chars_per_token: float = Field(default=4.0, gt=0.0)
+    dispatch_cooldown_seconds: float = Field(default=15.0, ge=0.0)
+    model_routing: ExtractionModelRoutingSettings = Field(default_factory=ExtractionModelRoutingSettings)
+
+
 class InferenceConfig(BaseModel):
     """Validated OpenAI inference configuration and resolved secret access."""
 
@@ -40,6 +83,7 @@ class InferenceConfig(BaseModel):
     max_tokens: int = Field(gt=0)
     rate_limit: RateLimitSettings
     batch: BatchSettings
+    extraction: ExtractionSettings = Field(default_factory=ExtractionSettings)
     pricing: dict[str, ModelPricing] = Field(default_factory=dict)
     api_key: SecretStr = Field(exclude=True, repr=False)
 
@@ -81,7 +125,17 @@ def _apply_env_overrides(config: dict[str, Any], environ: dict[str, str]) -> dic
         **config,
         "rate_limit": dict(config.get("rate_limit", {}) or {}),
         "batch": dict(config.get("batch", {}) or {}),
+        "extraction": dict(config.get("extraction", {}) or {}),
         "pricing": dict(config.get("pricing", {}) or {}),
+    }
+    extraction_model_routing = (
+        merged["extraction"].get("model_routing", {})
+        if isinstance(merged["extraction"].get("model_routing", {}), dict)
+        else {}
+    )
+    merged["extraction"]["model_routing"] = {
+        **extraction_model_routing,
+        "rules": list(extraction_model_routing.get("rules", []) or []),
     }
 
     scalar_overrides: dict[str, tuple[str, type[Any]]] = {
@@ -106,6 +160,17 @@ def _apply_env_overrides(config: dict[str, Any], environ: dict[str, str]) -> dic
         ("batch", "max_poll_duration_seconds"): (
             "KNOWLEDGE_FORGE_OPENAI_BATCH_MAX_POLL_DURATION_SECONDS",
             int,
+        ),
+        ("extraction", "strategy"): ("KNOWLEDGE_FORGE_OPENAI_EXTRACTION_STRATEGY", str),
+        ("extraction", "direct_concurrency"): ("KNOWLEDGE_FORGE_OPENAI_EXTRACTION_DIRECT_CONCURRENCY", int),
+        ("extraction", "batch_chunk_size"): ("KNOWLEDGE_FORGE_OPENAI_EXTRACTION_BATCH_CHUNK_SIZE", int),
+        ("extraction", "token_estimate_chars_per_token"): (
+            "KNOWLEDGE_FORGE_OPENAI_EXTRACTION_TOKEN_ESTIMATE_CHARS_PER_TOKEN",
+            float,
+        ),
+        ("extraction", "dispatch_cooldown_seconds"): (
+            "KNOWLEDGE_FORGE_OPENAI_EXTRACTION_DISPATCH_COOLDOWN_SECONDS",
+            float,
         ),
     }
 

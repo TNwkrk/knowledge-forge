@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import urllib.error
 from datetime import date
@@ -40,6 +41,7 @@ from knowledge_forge.extract import (
     summarize_run_status,
 )
 from knowledge_forge.inference import InferenceClient, InferenceConfig, aggregate_costs, ingest_results, poll_batch
+from knowledge_forge.inference.config import ExtractionStrategy
 from knowledge_forge.intake.importer import (
     RegistrationRequest,
     get_data_dir,
@@ -513,12 +515,26 @@ def section(doc_id: str | None, section_all: bool) -> None:
     show_default=True,
     help="Inference configuration file.",
 )
+@click.option(
+    "--strategy",
+    type=click.Choice([strategy.value for strategy in ExtractionStrategy], case_sensitive=False),
+    help="Override the extraction scheduler strategy for this run.",
+)
+@click.option("--max-requests-per-minute", type=click.IntRange(min=1), help="Override the scheduler RPM ceiling.")
+@click.option("--max-tokens-per-minute", type=click.IntRange(min=1), help="Override the scheduler TPM ceiling.")
+@click.option("--direct-concurrency", type=click.IntRange(min=1), help="Override direct-mode concurrency.")
+@click.option("--batch-chunk-size", type=click.IntRange(min=1), help="Override the bounded batch chunk size.")
 def extract(
     args: tuple[str, ...],
     section_id: str | None,
     min_confidence: float,
     max_repair_attempts: int,
     config_path: Path,
+    strategy: str | None,
+    max_requests_per_minute: int | None,
+    max_tokens_per_minute: int | None,
+    direct_concurrency: int | None,
+    batch_chunk_size: int | None,
 ) -> None:
     """Extract structured records from canonical sections."""
     if args[:1] == ("provenance",):
@@ -534,7 +550,14 @@ def extract(
     doc_id = args[0]
 
     try:
-        config = InferenceConfig.load(config_path)
+        config = _load_inference_config_with_overrides(
+            config_path,
+            strategy=strategy,
+            max_requests_per_minute=max_requests_per_minute,
+            max_tokens_per_minute=max_tokens_per_minute,
+            direct_concurrency=direct_concurrency,
+            batch_chunk_size=batch_chunk_size,
+        )
         execution = start_extraction_run(
             [doc_id],
             config=config,
@@ -606,19 +629,40 @@ def extract_run() -> None:
     show_default=True,
     help="Inference configuration file.",
 )
+@click.option(
+    "--strategy",
+    type=click.Choice([strategy.value for strategy in ExtractionStrategy], case_sensitive=False),
+    help="Override the extraction scheduler strategy for this run.",
+)
+@click.option("--max-requests-per-minute", type=click.IntRange(min=1), help="Override the scheduler RPM ceiling.")
+@click.option("--max-tokens-per-minute", type=click.IntRange(min=1), help="Override the scheduler TPM ceiling.")
+@click.option("--direct-concurrency", type=click.IntRange(min=1), help="Override direct-mode concurrency.")
+@click.option("--batch-chunk-size", type=click.IntRange(min=1), help="Override the bounded batch chunk size.")
 def extract_run_start(
     doc_ids: tuple[str, ...],
     section_ids: tuple[str, ...],
     min_confidence: float,
     max_repair_attempts: int,
     config_path: Path,
+    strategy: str | None,
+    max_requests_per_minute: int | None,
+    max_tokens_per_minute: int | None,
+    direct_concurrency: int | None,
+    batch_chunk_size: int | None,
 ) -> None:
     """Create and execute a durable extraction run."""
     if not doc_ids:
         raise click.ClickException("pass at least one doc_id")
 
     try:
-        config = InferenceConfig.load(config_path)
+        config = _load_inference_config_with_overrides(
+            config_path,
+            strategy=strategy,
+            max_requests_per_minute=max_requests_per_minute,
+            max_tokens_per_minute=max_tokens_per_minute,
+            direct_concurrency=direct_concurrency,
+            batch_chunk_size=batch_chunk_size,
+        )
         execution = start_extraction_run(
             list(doc_ids),
             config=config,
@@ -658,10 +702,34 @@ def extract_run_status(run_id: str) -> None:
     show_default=True,
     help="Inference configuration file.",
 )
-def extract_run_resume(run_id: str, config_path: Path) -> None:
+@click.option(
+    "--strategy",
+    type=click.Choice([strategy.value for strategy in ExtractionStrategy], case_sensitive=False),
+    help="Override the extraction scheduler strategy while resuming.",
+)
+@click.option("--max-requests-per-minute", type=click.IntRange(min=1), help="Override the scheduler RPM ceiling.")
+@click.option("--max-tokens-per-minute", type=click.IntRange(min=1), help="Override the scheduler TPM ceiling.")
+@click.option("--direct-concurrency", type=click.IntRange(min=1), help="Override direct-mode concurrency.")
+@click.option("--batch-chunk-size", type=click.IntRange(min=1), help="Override the bounded batch chunk size.")
+def extract_run_resume(
+    run_id: str,
+    config_path: Path,
+    strategy: str | None,
+    max_requests_per_minute: int | None,
+    max_tokens_per_minute: int | None,
+    direct_concurrency: int | None,
+    batch_chunk_size: int | None,
+) -> None:
     """Resume a durable extraction run after interruption."""
     try:
-        config = InferenceConfig.load(config_path)
+        config = _load_inference_config_with_overrides(
+            config_path,
+            strategy=strategy,
+            max_requests_per_minute=max_requests_per_minute,
+            max_tokens_per_minute=max_tokens_per_minute,
+            direct_concurrency=direct_concurrency,
+            batch_chunk_size=batch_chunk_size,
+        )
         execution = resume_extraction_run(run_id, config=config, data_dir=get_data_dir())
     except (FileNotFoundError, KeyError, ValueError) as exc:
         raise click.ClickException(str(exc)) from exc
@@ -682,10 +750,34 @@ def extract_run_resume(run_id: str, config_path: Path) -> None:
     show_default=True,
     help="Inference configuration file.",
 )
-def extract_run_retry_failed(run_id: str, config_path: Path) -> None:
+@click.option(
+    "--strategy",
+    type=click.Choice([strategy.value for strategy in ExtractionStrategy], case_sensitive=False),
+    help="Override the extraction scheduler strategy while retrying failed items.",
+)
+@click.option("--max-requests-per-minute", type=click.IntRange(min=1), help="Override the scheduler RPM ceiling.")
+@click.option("--max-tokens-per-minute", type=click.IntRange(min=1), help="Override the scheduler TPM ceiling.")
+@click.option("--direct-concurrency", type=click.IntRange(min=1), help="Override direct-mode concurrency.")
+@click.option("--batch-chunk-size", type=click.IntRange(min=1), help="Override the bounded batch chunk size.")
+def extract_run_retry_failed(
+    run_id: str,
+    config_path: Path,
+    strategy: str | None,
+    max_requests_per_minute: int | None,
+    max_tokens_per_minute: int | None,
+    direct_concurrency: int | None,
+    batch_chunk_size: int | None,
+) -> None:
     """Retry only failed items while preserving prior successful work."""
     try:
-        config = InferenceConfig.load(config_path)
+        config = _load_inference_config_with_overrides(
+            config_path,
+            strategy=strategy,
+            max_requests_per_minute=max_requests_per_minute,
+            max_tokens_per_minute=max_tokens_per_minute,
+            direct_concurrency=direct_concurrency,
+            batch_chunk_size=batch_chunk_size,
+        )
         execution = retry_failed_extraction_run(run_id, config=config, data_dir=get_data_dir())
     except (FileNotFoundError, KeyError, ValueError) as exc:
         raise click.ClickException(str(exc)) from exc
@@ -701,12 +793,57 @@ def _echo_run_summary(run: object) -> None:
     click.echo(f"Run: {run.run_id}")
     click.echo(f"Status: {run.status.value}")
     click.echo(f"Documents: {', '.join(document.doc_id for document in run.documents)}")
+    click.echo(f"Strategy: {run.scheduler.strategy.value}")
+    click.echo(f"Budgets: {run.scheduler.max_requests_per_minute} RPM / {run.scheduler.max_tokens_per_minute} TPM")
     click.echo(f"Items: {run.item_count}")
     click.echo(f"Pending: {counts['pending']}")
     click.echo(f"In progress: {counts['in_progress']}")
     click.echo(f"Succeeded: {counts['succeeded']}")
     click.echo(f"Failed: {counts['failed']}")
     click.echo(f"Skipped: {counts['skipped']}")
+    click.echo(
+        "Estimated tokens: "
+        f"queued={run.metrics.estimated_tokens_queued} dispatched={run.metrics.estimated_tokens_dispatched}"
+    )
+    click.echo(
+        "Dispatch counts: "
+        f"direct={run.metrics.direct_dispatch_count} batch={run.metrics.batch_dispatch_count} "
+        f"fallback={run.metrics.fallback_dispatch_count}"
+    )
+    click.echo(f"Throttle: {run.metrics.throttle_seconds:.2f}s total, 429s={run.metrics.rate_limit_429_count}")
+
+
+def _load_inference_config_with_overrides(
+    config_path: Path,
+    *,
+    strategy: str | None = None,
+    max_requests_per_minute: int | None = None,
+    max_tokens_per_minute: int | None = None,
+    direct_concurrency: int | None = None,
+    batch_chunk_size: int | None = None,
+) -> InferenceConfig:
+    """Load inference config using YAML plus runtime env overrides."""
+    if (
+        strategy is None
+        and max_requests_per_minute is None
+        and max_tokens_per_minute is None
+        and direct_concurrency is None
+        and batch_chunk_size is None
+    ):
+        return InferenceConfig.load(config_path)
+
+    environ = dict(os.environ)
+    if strategy is not None:
+        environ["KNOWLEDGE_FORGE_OPENAI_EXTRACTION_STRATEGY"] = strategy
+    if max_requests_per_minute is not None:
+        environ["KNOWLEDGE_FORGE_OPENAI_RATE_LIMIT_MAX_REQUESTS_PER_MINUTE"] = str(max_requests_per_minute)
+    if max_tokens_per_minute is not None:
+        environ["KNOWLEDGE_FORGE_OPENAI_RATE_LIMIT_MAX_TOKENS_PER_MINUTE"] = str(max_tokens_per_minute)
+    if direct_concurrency is not None:
+        environ["KNOWLEDGE_FORGE_OPENAI_EXTRACTION_DIRECT_CONCURRENCY"] = str(direct_concurrency)
+    if batch_chunk_size is not None:
+        environ["KNOWLEDGE_FORGE_OPENAI_EXTRACTION_BATCH_CHUNK_SIZE"] = str(batch_chunk_size)
+    return InferenceConfig.load(config_path, environ=environ)
 
 
 cli.add_command(extract_run)

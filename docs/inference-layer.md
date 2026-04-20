@@ -11,6 +11,7 @@ The OpenAI inference layer is a first-class subsystem of Knowledge Forge. It is 
 3. **Schema-bound.** Extraction and compilation prompts define expected output schemas. Responses are validated against these schemas.
 4. **Retriable.** Failed requests are retried with backoff. Failed batch items are reconciled individually.
 5. **Cost-aware.** Token usage and estimated cost are tracked per request, per batch, and per pipeline run.
+6. **Run-scheduled.** Extraction runs enforce rolling TPM/RPM budgets before dispatch and persist scheduler state on the durable run artifact.
 
 ## Architecture
 
@@ -74,12 +75,25 @@ openai:
   max_tokens: 4096
   rate_limit:
     max_requests_per_minute: 500
-    max_tokens_per_minute: 150000
+    max_tokens_per_minute: 30000
   batch:
     max_batch_size: 50000
     poll_interval_seconds: 60
     max_poll_duration_seconds: 86400
+  extraction:
+    strategy: direct_serial
+    direct_concurrency: 1
+    batch_chunk_size: 25
+    token_estimate_chars_per_token: 4.0
+    dispatch_cooldown_seconds: 15.0
+    model_routing:
+      rules: []
 ```
+
+Runtime overrides are supported through `KNOWLEDGE_FORGE_OPENAI_*` environment
+variables and the extraction CLI flags for strategy, RPM, TPM, direct
+concurrency, and batch chunk size. That lets the scheduler honor the real org
+tier even when the checked-in defaults are stale.
 
 ### Direct request mode
 
@@ -110,6 +124,38 @@ Flow:
 3. **Poll** — Check batch status on an interval
 4. **Ingest** — Download results, parse each response, validate against schema
 5. **Reconcile** — Identify failed items, log errors, queue retries
+
+### Durable extraction scheduling
+
+The extraction engine now executes through the durable run/checkpoint layer from
+issue `#91`. Each section/record-type work item is scheduled with an explicit
+strategy:
+
+- `direct_serial` — one direct request at a time with pre-dispatch budget checks
+- `direct_limited` — bounded direct concurrency with the same shared budget and cooldown rules
+- `batch` — bounded batch chunks that are persisted back into the durable run artifact
+
+Before dispatch, the scheduler estimates the request token footprint for each
+work item and enforces the configured rolling 60-second RPM and TPM ceilings.
+When a dispatch would exceed the budget window, the run sleeps before sending
+the request instead of waiting for the provider to reject it.
+
+Provider `429` responses are treated as run-level signals. The scheduler records
+a shared cooldown event on the extraction run, increments the run-level `429`
+counter, and delays future dispatches globally instead of letting each item
+hammer the API independently.
+
+Optional model routing rules can choose a different extraction model by record
+type, section type, estimated prompt size, or retry class. The selected model is
+persisted back onto each durable work item so fallback usage remains reviewable.
+
+Each extraction run now tracks:
+
+- pending / running / succeeded / failed / skipped item counts
+- estimated tokens queued and dispatched
+- total throttle time and `429` count
+- direct vs batch dispatch counts
+- fallback-model usage
 
 ### Request logging
 
@@ -151,7 +197,8 @@ structured JSON logs under `data/inference_logs/`.
 ### Retry and rate limiting
 
 - Transient errors (429, 500, 503) are retried with exponential backoff
-- Rate limiting respects both RPM and TPM limits
+- Extraction runs enforce rolling RPM and TPM budgets before dispatch
+- Shared cooldowns are applied across the run after `429` responses
 - Failed batch items are retried individually in a follow-up batch or via direct mode
 - Permanent failures (schema violations after repair, content policy blocks) are logged and flagged
 
