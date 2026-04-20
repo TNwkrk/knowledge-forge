@@ -3,19 +3,23 @@
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
 from knowledge_forge.extract.engine import ExtractionWorkItemResult
 from knowledge_forge.extract.runs import (
     ExtractionRunItemStatus,
+    ExtractionRunStatus,
     create_extraction_run,
     execute_extraction_run,
     load_extraction_run,
     resume_extraction_run,
     retry_failed_extraction_run,
 )
+from knowledge_forge.inference.config import ExtractionStrategy
 from knowledge_forge.intake.importer import RegistrationRequest, load_manifest, register_document
 from knowledge_forge.intake.manifest import BucketAssignment, DocumentStatus
 from knowledge_forge.parse.sectioning import Section
@@ -95,13 +99,39 @@ def _write_bucket_assignments(data_dir: Path, doc_id: str) -> None:
 
 
 class _FakeConfig:
-    extraction_model: str = "gpt-4o-mini"
-    max_tokens: int = 4096
+    def __init__(
+        self,
+        *,
+        strategy: ExtractionStrategy = ExtractionStrategy.DIRECT_SERIAL,
+        max_tokens: int = 4096,
+        max_requests_per_minute: int = 500,
+        max_tokens_per_minute: int = 150000,
+        direct_concurrency: int = 1,
+        batch_chunk_size: int = 25,
+        routing_rules: list[object] | None = None,
+    ) -> None:
+        self.extraction_model = "gpt-4o-mini"
+        self.max_tokens = max_tokens
+        self.temperature = 0.0
+        self.rate_limit = SimpleNamespace(
+            max_requests_per_minute=max_requests_per_minute,
+            max_tokens_per_minute=max_tokens_per_minute,
+        )
+        self.batch = SimpleNamespace(max_batch_size=50000, poll_interval_seconds=60, max_poll_duration_seconds=86400)
+        self.extraction = SimpleNamespace(
+            strategy=strategy,
+            direct_concurrency=direct_concurrency,
+            batch_chunk_size=batch_chunk_size,
+            dispatch_cooldown_seconds=15.0,
+            token_estimate_chars_per_token=4.0,
+            model_routing=SimpleNamespace(rules=list(routing_rules or [])),
+        )
 
 
 class _FingerprintOnlyClient:
     def __init__(self, config: object, *, data_dir: Path | None = None) -> None:
         self.config = config
+        self._client = object()
 
 
 def _succeeded_result(item, *, record_ids: list[str] | None = None) -> ExtractionWorkItemResult:
@@ -136,12 +166,12 @@ def _failed_result(item, *, error: str = "repair failed") -> ExtractionWorkItemR
     )
 
 
-def _make_run_fixture(tmp_path: Path) -> tuple[Path, str]:
+def _make_run_fixture(tmp_path: Path, *, include_second_section: bool = False) -> tuple[Path, str]:
     data_dir = tmp_path / "data"
     doc_id = _register_parsed_fixture(_write_pdf(tmp_path / "manual.pdf"), data_dir)
     _write_parse_meta(data_dir, doc_id)
     _write_bucket_assignments(data_dir, doc_id)
-    section = Section(
+    first_section = Section(
         doc_id=doc_id,
         section_id=f"{doc_id}--startup--001",
         section_type="startup",
@@ -150,7 +180,18 @@ def _make_run_fixture(tmp_path: Path) -> tuple[Path, str]:
         page_range=(18, 20),
         heading_path=["DC1000 Service Manual", "Startup Procedure"],
     )
-    _write_section(data_dir / "sections" / doc_id / f"{section.section_id}.json", section)
+    _write_section(data_dir / "sections" / doc_id / f"{first_section.section_id}.json", first_section)
+    if include_second_section:
+        second_section = Section(
+            doc_id=doc_id,
+            section_id=f"{doc_id}--maintenance--002",
+            section_type="maintenance",
+            title="Maintenance Procedure",
+            content="1. Lock out power.\n2. Check the pump seals.",
+            page_range=(21, 22),
+            heading_path=["DC1000 Service Manual", "Maintenance Procedure"],
+        )
+        _write_section(data_dir / "sections" / doc_id / f"{second_section.section_id}.json", second_section)
     return data_dir, doc_id
 
 
@@ -246,3 +287,152 @@ def test_retry_failed_items_preserves_prior_successful_work(monkeypatch, tmp_pat
     assert retried_items["procedure"].attempt_count == 1
     assert retried_items["warning"].attempt_count == 2
     assert load_manifest(data_dir, doc_id).document.status == DocumentStatus.EXTRACTED
+
+
+def test_scheduler_enforces_rolling_token_budget_before_dispatch(monkeypatch, tmp_path: Path) -> None:
+    data_dir, doc_id = _make_run_fixture(tmp_path)
+    config = _FakeConfig(max_tokens_per_minute=100)
+    monkeypatch.setattr("knowledge_forge.extract.runs.InferenceClient", _FingerprintOnlyClient)
+    monkeypatch.setattr("knowledge_forge.extract.runs._estimate_total_tokens", lambda *_args, **_kwargs: 60)
+    run = create_extraction_run([doc_id], config=config, data_dir=data_dir)
+    sleeps: list[float] = []
+    clock = {"now": 0.0}
+
+    monkeypatch.setattr("knowledge_forge.extract.runs.time.monotonic", lambda: clock["now"])
+
+    def fake_sleep(seconds: float) -> None:
+        sleeps.append(seconds)
+        clock["now"] += seconds
+
+    monkeypatch.setattr("knowledge_forge.extract.runs.time.sleep", fake_sleep)
+    monkeypatch.setattr(
+        "knowledge_forge.extract.runs.execute_work_item",
+        lambda **kwargs: _succeeded_result(_load_item(run.run_id, kwargs["record_type"], data_dir=data_dir)),
+    )
+
+    execution = execute_extraction_run(run.run_id, config=config, data_dir=data_dir)
+
+    assert execution.run.status == ExtractionRunStatus.COMPLETED
+    assert sleeps == [60.0]
+    assert execution.run.metrics.throttle_seconds == 60.0
+    assert execution.run.metrics.estimated_tokens_dispatched == 120
+
+
+def test_shared_cooldown_on_429_retries_item_globally(monkeypatch, tmp_path: Path) -> None:
+    data_dir, doc_id = _make_run_fixture(tmp_path)
+    config = _FakeConfig()
+    monkeypatch.setattr("knowledge_forge.extract.runs.InferenceClient", _FingerprintOnlyClient)
+    monkeypatch.setattr("knowledge_forge.extract.runs._estimate_total_tokens", lambda *_args, **_kwargs: 10)
+    run = create_extraction_run([doc_id], config=config, data_dir=data_dir)
+    sleeps: list[float] = []
+    clock = {"now": 0.0}
+    snapshots: list[dict[str, str]] = []
+    original_save = __import__("knowledge_forge.extract.runs", fromlist=["save_extraction_run"]).save_extraction_run
+
+    class FakeRateLimitError(RuntimeError):
+        status_code = 429
+
+    monkeypatch.setattr("knowledge_forge.extract.runs.time.monotonic", lambda: clock["now"])
+
+    def fake_sleep(seconds: float) -> None:
+        sleeps.append(seconds)
+        clock["now"] += seconds
+
+    def wrapped_save(run_obj, *, data_dir=None):
+        snapshots.append({item.record_type: item.status.value for item in run_obj.items})
+        return original_save(run_obj, data_dir=data_dir)
+
+    attempts = {"procedure": 0, "warning": 0}
+
+    def flaky_execute_work_item(**kwargs):
+        item = _load_item(run.run_id, kwargs["record_type"], data_dir=data_dir)
+        attempts[item.record_type] += 1
+        if item.record_type == "procedure" and attempts[item.record_type] == 1:
+            raise FakeRateLimitError("Rate limit exceeded. Please try again in 6s.")
+        return _succeeded_result(item)
+
+    monkeypatch.setattr("knowledge_forge.extract.runs.time.sleep", fake_sleep)
+    monkeypatch.setattr("knowledge_forge.extract.runs.save_extraction_run", wrapped_save)
+    monkeypatch.setattr("knowledge_forge.extract.runs.execute_work_item", flaky_execute_work_item)
+
+    execution = execute_extraction_run(run.run_id, config=config, data_dir=data_dir)
+    persisted = load_extraction_run(run.run_id, data_dir=data_dir)
+
+    assert execution.run.status == ExtractionRunStatus.COMPLETED
+    assert persisted.metrics.rate_limit_429_count == 1
+    assert persisted.metrics.throttle_seconds == 15.0
+    assert sleeps == [15.0]
+    assert attempts["procedure"] == 2
+    assert any(snapshot == {"procedure": "pending", "warning": "pending"} for snapshot in snapshots)
+
+
+def test_batch_strategy_is_explicit_and_counts_batch_dispatches(monkeypatch, tmp_path: Path) -> None:
+    data_dir, doc_id = _make_run_fixture(tmp_path)
+    config = _FakeConfig(strategy=ExtractionStrategy.BATCH)
+    monkeypatch.setattr("knowledge_forge.extract.runs.InferenceClient", _FingerprintOnlyClient)
+    run = create_extraction_run([doc_id], config=config, data_dir=data_dir)
+    submitted_custom_ids: list[str] = []
+
+    monkeypatch.setattr(
+        "knowledge_forge.extract.runs.submit_batch",
+        lambda jsonl_path, _config, sdk_client=None: (
+            submitted_custom_ids.extend(
+                json.loads(line)["custom_id"] for line in jsonl_path.read_text(encoding="utf-8").splitlines() if line
+            )
+            or SimpleNamespace(batch_id="batch-001")
+        ),
+    )
+    monkeypatch.setattr("knowledge_forge.extract.runs.poll_batch", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        "knowledge_forge.extract.runs.ingest_results",
+        lambda *args, **kwargs: SimpleNamespace(
+            successful=[
+                SimpleNamespace(custom_id=custom_id, parsed_json={}, output_tokens=0, schema_valid=True)
+                for custom_id in submitted_custom_ids
+            ],
+            failed=[],
+        ),
+    )
+    monkeypatch.setattr(
+        "knowledge_forge.extract.runs._persist_batch_success",
+        lambda _run, *, prepared_item, success, client, data_dir: _succeeded_result(
+            run.items[prepared_item.item_index]
+        ),
+    )
+
+    execution = execute_extraction_run(run.run_id, config=config, data_dir=data_dir)
+
+    assert execution.run.scheduler.strategy == ExtractionStrategy.BATCH
+    assert execution.run.metrics.batch_dispatch_count == 2
+    assert execution.run.metrics.direct_dispatch_count == 0
+    assert sorted(submitted_custom_ids) == sorted(item.item_id for item in execution.run.items)
+
+
+def test_model_routing_rule_records_selected_model_and_fallback_usage(monkeypatch, tmp_path: Path) -> None:
+    data_dir, doc_id = _make_run_fixture(tmp_path)
+    warning_fallback = SimpleNamespace(
+        model="gpt-4.1-mini",
+        record_types=["warning"],
+        section_types=[],
+        min_estimated_prompt_tokens=None,
+        max_estimated_prompt_tokens=None,
+        retry_class=None,
+    )
+    config = _FakeConfig(routing_rules=[warning_fallback])
+    monkeypatch.setattr("knowledge_forge.extract.runs.InferenceClient", _FingerprintOnlyClient)
+    run = create_extraction_run([doc_id], config=config, data_dir=data_dir)
+
+    def routed_execute_work_item(**kwargs):
+        item = _load_item(run.run_id, kwargs["record_type"], data_dir=data_dir)
+        chosen_model = kwargs.get("model_override") or item.fingerprint.model
+        return replace(_succeeded_result(item), fingerprint=replace(item.fingerprint, model=chosen_model))
+
+    monkeypatch.setattr("knowledge_forge.extract.runs.execute_work_item", routed_execute_work_item)
+
+    execution = execute_extraction_run(run.run_id, config=config, data_dir=data_dir)
+    routed_items = {item.record_type: item for item in execution.run.items}
+
+    assert routed_items["procedure"].selected_model == "gpt-4o-mini"
+    assert routed_items["warning"].selected_model == "gpt-4.1-mini"
+    assert routed_items["warning"].fingerprint.model == "gpt-4.1-mini"
+    assert execution.run.metrics.fallback_dispatch_count == 1

@@ -7,6 +7,7 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict, Field
 
 from knowledge_forge.inference import InferenceClient
+from knowledge_forge.inference.retry import RetryPolicy
 from knowledge_forge.inference.schema_validator import validate_response
 
 
@@ -39,6 +40,7 @@ def repair_extraction(
     source_section_id: str | None = None,
     pipeline_run_id: str | None = None,
     max_attempts: int = 2,
+    retry_policy: RetryPolicy | None = None,
 ) -> RepairResult:
     """Attempt a bounded repair loop before flagging manual review."""
     errors = [str(invalid_response)]
@@ -65,6 +67,7 @@ def repair_extraction(
                 source_doc_id=source_doc_id,
                 source_section_id=source_section_id,
                 pipeline_run_id=pipeline_run_id,
+                retry_policy=retry_policy,
             )
             return RepairResult(
                 valid=True,
@@ -92,6 +95,7 @@ def repair_extraction(
                 source_doc_id=source_doc_id,
                 source_section_id=source_section_id,
                 pipeline_run_id=pipeline_run_id,
+                retry_policy=retry_policy,
             )
             validation = validate_response(result.parsed_json, schema)
             if validation.valid:
