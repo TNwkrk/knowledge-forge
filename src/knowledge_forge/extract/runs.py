@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import time
 from collections import Counter, deque
 from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
@@ -1271,7 +1272,7 @@ def _classify_retry_class(last_error: str | None) -> str | None:
 
 def _is_rate_limit_message(message: str) -> bool:
     lowered = message.lower()
-    return "rate limit" in lowered or "too many requests" in lowered or "429" in lowered
+    return "rate limit" in lowered or "too many requests" in lowered or re.search(r"\b429\b", lowered) is not None
 
 
 def _next_run_id(data_dir: Path, *, today: date) -> str:
