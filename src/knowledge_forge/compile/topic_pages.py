@@ -337,7 +337,20 @@ def _normalize_llm_markdown(payload: str) -> list[str]:
     lines = [line.rstrip() for line in payload.strip().splitlines() if line.strip()]
     if not lines:
         return []
-    return [line for line in lines if "[Source:" in line]
+
+    normalized: list[str] = []
+    for index, line in enumerate(lines):
+        stripped = line.strip()
+        if stripped.startswith("[Source:") and normalized:
+            normalized[-1] = f"{normalized[-1]} {stripped}"
+            continue
+        if "[Source:" in line:
+            normalized.append(line)
+            continue
+        next_line = lines[index + 1].strip() if index + 1 < len(lines) else None
+        if next_line and next_line.startswith("[Source:"):
+            normalized.append(line)
+    return normalized
 
 
 def _render_claims(records: list[TopicRecord]) -> list[str]:
