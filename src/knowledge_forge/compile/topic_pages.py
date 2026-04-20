@@ -39,6 +39,14 @@ from knowledge_forge.intake.manifest import ManifestEntry, slugify
 from knowledge_forge.parse.sectioning import Section, SectionType
 
 COMPILATION_VERSION = "topic-pages-v1"
+TOPIC_DIGEST_TYPE_MAP: dict[str, str] = {
+    "startup_procedure": "workflow-guidance",
+    "shutdown_procedure": "workflow-guidance",
+    "maintenance_procedure": "workflow-guidance",
+    "alarm_reference": "fault-code",
+    "specifications": "controller",
+    "troubleshooting": "symptom",
+}
 TOPIC_TITLES: dict[str, str] = {
     "startup_procedure": "Startup Procedure",
     "shutdown_procedure": "Shutdown Procedure",
@@ -132,6 +140,7 @@ def compile_topic_page(
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
     source_documents = _build_source_documents(topic_records)
+    publish_metadata = _build_publish_metadata(bucket_id, topic, topic_records)
     frontmatter = {
         "title": _build_title(topic_records, topic),
         "generated_by": GENERATED_BY,
@@ -142,6 +151,7 @@ def compile_topic_page(
         "compilation_version": f"{COMPILATION_VERSION}@{prompt_template.version}",
         "bucket_id": bucket_id,
         "topic": topic,
+        **publish_metadata,
     }
     content = _render_content(
         bucket_id=bucket_id,
@@ -419,19 +429,110 @@ def _build_title(records: list[TopicRecord], topic: str) -> str:
 
 
 def _build_source_documents(records: list[TopicRecord]) -> list[dict[str, str]]:
-    seen: dict[str, dict[str, str]] = {}
+    seen: dict[tuple[str, str], dict[str, str | None]] = {}
     for entry in records:
         document = entry.manifest.document
+        locator = f'section "{entry.section.title}" ({record_page_label(entry.record)})'
         seen.setdefault(
-            entry.doc_id,
+            (entry.doc_id, locator),
             {
                 "doc_id": entry.doc_id,
+                "title": f"{document.manufacturer} {document.family} {document.document_type} ({document.revision})",
+                "attachment_id": None,
+                "locator": locator,
                 "revision": document.revision,
                 "manufacturer": document.manufacturer,
                 "family": document.family,
             },
         )
-    return [seen[doc_id] for doc_id in sorted(seen)]
+    return [seen[key] for key in sorted(seen)]
+
+
+def _build_publish_metadata(bucket_id: str, topic: str, records: list[TopicRecord]) -> dict[str, object]:
+    digest_type = TOPIC_DIGEST_TYPE_MAP[topic]
+    slug = _build_digest_slug(bucket_id, topic, digest_type=digest_type)
+    metadata: dict[str, object] = {
+        "digest_type": digest_type,
+        "slug": slug,
+        "status": "draft",
+        "knowledge_record_ids": [],
+        "cross_links": [],
+        "tags": _build_tags(records, digest_type=digest_type),
+    }
+    if digest_type == "controller":
+        metadata["controller_models"] = _controller_models(records)
+        metadata["system_types"] = []
+    elif digest_type == "fault-code":
+        metadata["fault_code"] = _fault_code_value(records, fallback=slug)
+        metadata["controller_models"] = _controller_models(records)
+    elif digest_type == "symptom":
+        metadata["symptom_key"] = _symptom_key(records, fallback=slug)
+        metadata["system_types"] = []
+    elif digest_type == "workflow-guidance":
+        metadata["workflow_key"] = slug
+    return metadata
+
+
+def _build_digest_slug(bucket_id: str, topic: str, *, digest_type: str) -> str:
+    bucket_slug = slugify(bucket_id)
+    if digest_type == "controller":
+        return f"{bucket_slug}-controller-digest"
+    if digest_type == "fault-code":
+        return f"{bucket_slug}-alarm-reference"
+    if digest_type == "symptom":
+        return f"{bucket_slug}-troubleshooting"
+    return f"{bucket_slug}-{slugify(topic)}"
+
+
+def _controller_models(records: list[TopicRecord]) -> list[str]:
+    models: set[str] = set()
+    for entry in records:
+        models.update(entry.manifest.document.model_applicability)
+    return sorted(models)
+
+
+def _fault_code_value(records: list[TopicRecord], *, fallback: str) -> str:
+    codes = sorted(
+        {
+            record.code.strip()
+            for entry in records
+            for record in [entry.record]
+            if isinstance(record, AlarmDefinition) and record.code.strip()
+        }
+    )
+    if not codes:
+        return fallback
+    if len(codes) == 1:
+        return codes[0]
+    return ", ".join(codes)
+
+
+def _symptom_key(records: list[TopicRecord], *, fallback: str) -> str:
+    symptoms = sorted(
+        {
+            slugify(record.symptom)
+            for entry in records
+            for record in [entry.record]
+            if isinstance(record, TroubleshootingEntry) and record.symptom.strip()
+        }
+    )
+    if not symptoms:
+        return fallback
+    if len(symptoms) == 1:
+        return symptoms[0]
+    return fallback
+
+
+def _build_tags(records: list[TopicRecord], *, digest_type: str) -> list[str]:
+    first_document = sorted(records, key=lambda entry: entry.doc_id)[0].manifest.document
+    tags = {
+        slugify(first_document.manufacturer),
+        slugify(first_document.family),
+        digest_type,
+    }
+    if digest_type == "controller":
+        tags.add("controller-family")
+    return sorted(tags)
 
 
 def _discover_bucket_ids(data_dir: Path) -> list[str]:

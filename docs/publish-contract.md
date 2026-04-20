@@ -163,16 +163,29 @@ Re-running publish for the same extraction outputs produces identical file
 content. Publish run IDs are unique; file contents are deterministic given the
 same extraction input.
 
-## Current implementation gap
+## Current implementation notes
 
-The code under `src/knowledge_forge/publish/` and `src/knowledge_forge/compile/`
-currently implements the deprecated internal taxonomy
-(`manufacturers/procedures/specs/troubleshooting/...`). Bringing stage.py,
-validate.py, and the compile stage into conformance with this contract is
-tracked by the issue stack that blocks the full Rockwell rerun:
+The compile-stage directories under `data/compiled/` may still use the older
+document-provenance-first layout (`overview-pages/`, `topic-pages/`,
+`contradiction-notes/`). That is intentional and remains an internal
+intermediate only.
 
-- Issue #96 — align publish output with the FlowCommander digest schema
-- Issue #85 — end-to-end Rockwell rerun (blocked by #96)
+The publish boundary now does the downstream rewrite explicitly:
 
-Until #96 closes, `kf publish validate` validates against the internal
-taxonomy and is not a substitute for downstream-shape validation.
+- `source-pages/` stage into `source-index/`
+- `topic-pages/` stage into the digest taxonomy under `controllers/`,
+  `fault-codes/`, `symptoms/`, and `workflow-guidance/`
+- `contradiction-notes/` stage into `contradictions/`
+- `overview-pages/` remain internal and are not staged into
+  `repo-wiki/knowledge/`
+
+`kf publish validate` now validates the staged output against the FlowCommander
+digest contract rather than the deprecated Knowledge Forge internal taxonomy.
+
+Known limitation to keep explicit for future reruns:
+
+- Some digest metadata is still inferred from current compile-stage bucket/topic
+  pages rather than from a final one-record-per-digest compiler. This is enough
+  to validate and stage the correct downstream shape for publish-boundary work,
+  but it does not by itself claim that the future rerun has perfect final digest
+  granularity.

@@ -22,6 +22,23 @@ from knowledge_forge.publish import (
 from knowledge_forge.publish.pr import PRResult
 
 
+def _source_doc(
+    *,
+    doc_id: str = "honeywell-dc1000-service-manual-rev-3",
+    title: str = "Honeywell DC1000 Service Manual (Rev 3)",
+    locator: str = 'section "Startup Procedure" (p.18)',
+) -> dict[str, object]:
+    return {
+        "doc_id": doc_id,
+        "title": title,
+        "attachment_id": None,
+        "locator": locator,
+        "revision": "Rev 3",
+        "manufacturer": "Honeywell",
+        "family": "DC1000",
+    }
+
+
 def _compiled_page(
     output_path: Path,
     *,
@@ -59,15 +76,7 @@ def _frontmatter(
         "title": title,
         "generated_by": "knowledge-forge",
         "publish_run": publish_run,
-        "source_documents": source_documents
-        or [
-            {
-                "doc_id": "honeywell-dc1000-service-manual-rev-3",
-                "revision": "Rev 3",
-                "manufacturer": "Honeywell",
-                "family": "DC1000",
-            }
-        ],
+        "source_documents": source_documents or [_source_doc()],
         "generated_at": "2026-04-16T17:30:00Z",
         "extraction_version": "extract-v1",
         "compilation_version": "compile-v1",
@@ -83,6 +92,85 @@ def _frontmatter(
     if canonical_identity is not None:
         payload["canonical_identity"] = canonical_identity
     return payload
+
+
+def _digest_frontmatter(
+    *,
+    digest_type: str,
+    slug: str,
+    title: str = "Compiled Digest",
+    source_documents: list[dict[str, object]] | None = None,
+    cross_links: list[str] | None = None,
+) -> dict[str, object]:
+    payload: dict[str, object] = {
+        "title": title,
+        "digest_type": digest_type,
+        "slug": slug,
+        "status": "draft",
+        "source_documents": source_documents or [_source_doc()],
+        "knowledge_record_ids": [],
+        "cross_links": cross_links or [],
+        "generated_by": "knowledge-forge",
+        "publish_run": "kf-20260416-001",
+        "generated_at": "2026-04-16T17:30:00Z",
+        "extraction_version": "extract-v1",
+        "compilation_version": "compile-v1",
+        "tags": [digest_type],
+    }
+    if digest_type == "controller":
+        payload["controller_models"] = ["DC1000"]
+        payload["system_types"] = []
+    elif digest_type == "fault-code":
+        payload["fault_code"] = "RUN"
+        payload["controller_models"] = ["DC1000"]
+    elif digest_type == "symptom":
+        payload["symptom_key"] = "startup-failure"
+        payload["system_types"] = []
+    elif digest_type == "workflow-guidance":
+        payload["workflow_key"] = slug
+    elif digest_type == "contradiction":
+        payload["contradiction_key"] = slug
+        payload["conflicting_pages"] = []
+        payload["resolution_status"] = "needs-review"
+    elif digest_type == "supersession":
+        payload["superseded_slug"] = "old-page"
+        payload["replacement_slug"] = "new-page"
+        payload["reason"] = "updated guidance"
+    return payload
+
+
+def _source_index_frontmatter(
+    *,
+    doc_id: str = "doc-1",
+    source_documents: list[dict[str, object]] | None = None,
+) -> dict[str, object]:
+    default_source = {
+        "doc_id": doc_id,
+        "revision": "Rev 3",
+        "manufacturer": "Honeywell",
+        "family": "DC1000",
+    }
+    return {
+        "title": "Source Manual",
+        "generated_by": "knowledge-forge",
+        "publish_run": "kf-20260416-001",
+        "source_documents": source_documents or [default_source],
+        "generated_at": "2026-04-16T17:30:00Z",
+        "extraction_version": "extract-v1",
+        "compilation_version": "source-pages-v1",
+        "doc_id": doc_id,
+    }
+
+
+def _source_index_docs(doc_id: str) -> list[dict[str, str]]:
+    return [
+        {
+            "doc_id": doc_id,
+            "revision": "Rev 3",
+            "manufacturer": "Honeywell",
+            "family": "DC1000",
+        }
+    ]
 
 
 def _write_markdown(path: Path, frontmatter: dict[str, object], content: str = "# Title\n") -> None:
@@ -161,6 +249,22 @@ def test_stage_publish_maps_compiled_pages_and_generates_publish_manifest(tmp_pa
             title="Honeywell DC1000 Startup Procedure",
             bucket_id="honeywell/dc1000/family",
             topic="startup_procedure",
+        )
+        | {
+            "digest_type": "workflow-guidance",
+            "slug": "honeywell-dc1000-family-startup-procedure",
+            "status": "draft",
+            "knowledge_record_ids": [],
+            "cross_links": ["../controllers/honeywell-dc1000-family-controller-digest.md"],
+            "workflow_key": "honeywell-dc1000-family-startup-procedure",
+            "tags": ["workflow-guidance"],
+        },
+        content=(
+            "# Startup Procedure\n\n"
+            "## Draft Synthesis\n\n"
+            "- Follow the staged startup sequence.\n\n"
+            "## Source-backed Claims\n\n"
+            "- Verify valve position before energizing. [Source: honeywell-dc1000-service-manual-rev-3, p.18]\n"
         ),
     )
     overview_page = _compiled_page(
@@ -177,16 +281,61 @@ def test_stage_publish_maps_compiled_pages_and_generates_publish_manifest(tmp_pa
     assert staged.stage_dir == data_dir / "publish" / "kf-20260416-001"
     assert staged.publish_root == staged.stage_dir / "repo-wiki" / "knowledge"
     assert sorted(staged.files_written) == [
-        "manufacturers/honeywell/dc1000/_index.md",
-        "procedures/honeywell-dc1000-family-startup-procedure.md",
         "source-index/honeywell-dc1000-service-manual-rev-3.md",
+        "workflow-guidance/honeywell-dc1000-family-startup-procedure.md",
     ]
+    assert not (staged.publish_root / "manufacturers" / "honeywell" / "dc1000" / "_index.md").exists()
     assert (staged.publish_root / "source-index" / "honeywell-dc1000-service-manual-rev-3.md").exists()
-    assert (staged.publish_root / "procedures" / "honeywell-dc1000-family-startup-procedure.md").exists()
+    digest_path = staged.publish_root / "workflow-guidance" / "honeywell-dc1000-family-startup-procedure.md"
+    assert digest_path.exists()
+    digest_text = digest_path.read_text(encoding="utf-8")
+    assert "digest_type: workflow-guidance" in digest_text
+    assert "workflow_key: honeywell-dc1000-family-startup-procedure" in digest_text
+    assert "## Summary" in digest_text
+    assert "## Field Guidance" in digest_text
+    assert "## Source Citations" in digest_text
+    assert "## Related Pages" in digest_text
     manifest = json.loads(staged.manifest_path.read_text(encoding="utf-8"))
     assert manifest["publish_run_id"] == "kf-20260416-001"
     assert manifest["files_written"] == staged.files_written
     assert manifest["source_documents"] == ["honeywell-dc1000-service-manual-rev-3"]
+    assert validate_publish_output(staged.stage_dir).valid is True
+
+
+def test_stage_publish_maps_specs_to_controllers_digest(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    specs_page = _compiled_page(
+        data_dir / "compiled" / "topic-pages" / "honeywell-dc1000-family" / "specifications.md",
+        doc_id="honeywell/dc1000/family",
+        frontmatter=_frontmatter(
+            title="Honeywell DC1000 Specifications",
+            bucket_id="honeywell/dc1000/family",
+            topic="specifications",
+        )
+        | {
+            "digest_type": "controller",
+            "slug": "honeywell-dc1000-family-controller-digest",
+            "status": "draft",
+            "knowledge_record_ids": [],
+            "cross_links": [],
+            "controller_models": ["DC1000", "DC1200"],
+            "system_types": [],
+            "tags": ["controller"],
+        },
+        content=(
+            "# Specifications\n\n"
+            "## Draft Synthesis\n\n"
+            "- Use this controller digest for family-level operating context.\n\n"
+            "## Source-backed Claims\n\n"
+            "- Operating pressure: 15 PSI.\n"
+        ),
+    )
+
+    staged = stage_publish("kf-20260416-controllers", [specs_page], data_dir=data_dir)
+
+    assert staged.files_written == [
+        "controllers/honeywell-dc1000-family-controller-digest.md",
+    ]
     assert validate_publish_output(staged.stage_dir).valid is True
 
 
@@ -241,18 +390,22 @@ def test_stage_publish_maps_contradiction_notes_to_analysis_subtree(tmp_path: Pa
 
     staged = stage_publish("kf-20260416-002", [contradiction_page], data_dir=data_dir)
 
-    assert staged.files_written == ["analysis/contradiction-notes/honeywell-dc1000-family.md"]
-    assert (staged.publish_root / "analysis" / "contradiction-notes" / "honeywell-dc1000-family.md").exists()
+    assert staged.files_written == ["contradictions/honeywell-dc1000-family.md"]
+    contradiction_path = staged.publish_root / "contradictions" / "honeywell-dc1000-family.md"
+    assert contradiction_path.exists()
+    contradiction_text = contradiction_path.read_text(encoding="utf-8")
+    assert "digest_type: contradiction" in contradiction_text
+    assert "resolution_status: needs-review" in contradiction_text
     assert validate_publish_output(staged.stage_dir).valid is True
 
 
 def test_generate_publish_manifest_returns_expected_contract_fields() -> None:
     manifest = generate_publish_manifest(
         "kf-20260416-001",
-        ["source-index/doc-1.md", "procedures/doc-1-startup.md"],
+        ["source-index/doc-1.md", "workflow-guidance/doc-1-startup.md"],
         source_documents=["doc-1"],
         buckets=["honeywell/dc1000/family"],
-        files_updated=["specs/doc-1-specs.md"],
+        files_updated=["controllers/doc-1-controller.md"],
         files_removed=["source-index/doc-old.md"],
         extraction_version="extract-v1",
         compilation_version="compile-v1",
@@ -262,8 +415,8 @@ def test_generate_publish_manifest_returns_expected_contract_fields() -> None:
     assert manifest["knowledge_forge_version"]
     assert manifest["source_documents"] == ["doc-1"]
     assert manifest["buckets"] == ["honeywell/dc1000/family"]
-    assert manifest["files_written"] == ["procedures/doc-1-startup.md", "source-index/doc-1.md"]
-    assert manifest["files_updated"] == ["specs/doc-1-specs.md"]
+    assert manifest["files_written"] == ["source-index/doc-1.md", "workflow-guidance/doc-1-startup.md"]
+    assert manifest["files_updated"] == ["controllers/doc-1-controller.md"]
     assert manifest["files_removed"] == ["source-index/doc-old.md"]
     assert manifest["generated_at"].endswith("Z")
 
@@ -271,68 +424,86 @@ def test_generate_publish_manifest_returns_expected_contract_fields() -> None:
 def test_validate_publish_output_accepts_supported_target_directories(tmp_path: Path) -> None:
     stage_dir = tmp_path / "data" / "publish" / "kf-20260416-002"
     publish_root = stage_dir / "repo-wiki" / "knowledge"
-    source_doc = {
-        "doc_id": "honeywell-dc1000-service-manual-rev-3",
-        "revision": "Rev 3",
-        "manufacturer": "Honeywell",
-        "family": "DC1000",
-    }
+    source_doc = _source_doc()
 
     files_written = [
-        "manufacturers/honeywell/_index.md",
-        "manufacturers/honeywell/dc1000/_index.md",
-        "procedures/honeywell-dc1000-family-startup-procedure.md",
-        "specs/honeywell-dc1000-family-specifications.md",
-        "troubleshooting/honeywell-dc1000-family-troubleshooting.md",
-        "workflow-guidance/honeywell-dc1000-family-sop.md",
-        "parts/honeywell-dc1000-family-parts.md",
-        "safety/honeywell-dc1000-family-safety.md",
+        "controllers/honeywell-dc1000-family-controller-digest.md",
+        "fault-codes/honeywell-dc1000-family-alarm-reference.md",
+        "symptoms/honeywell-dc1000-family-troubleshooting.md",
+        "workflow-guidance/honeywell-dc1000-family-startup-procedure.md",
+        "contradictions/honeywell-dc1000-family.md",
         "source-index/honeywell-dc1000-service-manual-rev-3.md",
     ]
 
     _write_markdown(
-        publish_root / "manufacturers" / "honeywell" / "_index.md",
-        _frontmatter(
-            title="Honeywell Manufacturer Index",
+        publish_root / "controllers" / "honeywell-dc1000-family-controller-digest.md",
+        _digest_frontmatter(
+            digest_type="controller",
+            slug="honeywell-dc1000-family-controller-digest",
+            title="Honeywell DC1000 Controller Digest",
             source_documents=[source_doc],
-            page_type="manufacturer_index",
+            cross_links=["../workflow-guidance/honeywell-dc1000-family-startup-procedure.md"],
         ),
+        "## Summary\n\nController summary.\n\n## Field Guidance\n\nController guidance.\n\n## Source Citations\n\n"
+        "- Citation\n\n## Related Pages\n\n- ../workflow-guidance/honeywell-dc1000-family-startup-procedure.md\n",
     )
     _write_markdown(
-        publish_root / "manufacturers" / "honeywell" / "dc1000" / "_index.md",
-        _frontmatter(
-            title="Honeywell DC1000 Family Overview",
+        publish_root / "fault-codes" / "honeywell-dc1000-family-alarm-reference.md",
+        _digest_frontmatter(
+            digest_type="fault-code",
+            slug="honeywell-dc1000-family-alarm-reference",
+            title="Honeywell DC1000 Alarm Reference",
             source_documents=[source_doc],
-            page_type="family_overview",
         ),
+        "## Summary\n\nAlarm summary.\n\n## Field Guidance\n\nAlarm guidance.\n\n## Source Citations\n\n"
+        "- Citation\n\n## Related Pages\n\n- None yet.\n",
     )
     _write_markdown(
-        publish_root / "procedures" / "honeywell-dc1000-family-startup-procedure.md",
-        _frontmatter(source_documents=[source_doc], bucket_id="honeywell/dc1000/family", topic="startup_procedure"),
+        publish_root / "symptoms" / "honeywell-dc1000-family-troubleshooting.md",
+        _digest_frontmatter(
+            digest_type="symptom",
+            slug="honeywell-dc1000-family-troubleshooting",
+            title="Honeywell DC1000 Troubleshooting",
+            source_documents=[source_doc],
+        ),
+        "## Summary\n\nSymptom summary.\n\n## Field Guidance\n\nSymptom guidance.\n\n## Source Citations\n\n"
+        "- Citation\n\n## Related Pages\n\n- None yet.\n",
     )
     _write_markdown(
-        publish_root / "specs" / "honeywell-dc1000-family-specifications.md",
-        _frontmatter(source_documents=[source_doc], bucket_id="honeywell/dc1000/family", topic="specifications"),
+        publish_root / "workflow-guidance" / "honeywell-dc1000-family-startup-procedure.md",
+        _digest_frontmatter(
+            digest_type="workflow-guidance",
+            slug="honeywell-dc1000-family-startup-procedure",
+            title="Honeywell DC1000 Startup Procedure",
+            source_documents=[source_doc],
+        ),
+        "## Summary\n\nWorkflow summary.\n\n## Field Guidance\n\nWorkflow guidance.\n\n## Source Citations\n\n"
+        "- Citation\n\n## Related Pages\n\n- None yet.\n",
     )
     _write_markdown(
-        publish_root / "troubleshooting" / "honeywell-dc1000-family-troubleshooting.md",
-        _frontmatter(source_documents=[source_doc], bucket_id="honeywell/dc1000/family", topic="troubleshooting"),
-    )
-    _write_markdown(
-        publish_root / "workflow-guidance" / "honeywell-dc1000-family-sop.md",
-        _frontmatter(source_documents=[source_doc], bucket_id="honeywell/dc1000/family"),
-    )
-    _write_markdown(
-        publish_root / "parts" / "honeywell-dc1000-family-parts.md",
-        _frontmatter(source_documents=[source_doc], bucket_id="honeywell/dc1000/family"),
-    )
-    _write_markdown(
-        publish_root / "safety" / "honeywell-dc1000-family-safety.md",
-        _frontmatter(source_documents=[source_doc], bucket_id="honeywell/dc1000/family"),
+        publish_root / "contradictions" / "honeywell-dc1000-family.md",
+        _digest_frontmatter(
+            digest_type="contradiction",
+            slug="honeywell-dc1000-family",
+            title="Contradictions for Honeywell DC1000",
+            source_documents=[source_doc],
+        ),
+        "## Summary\n\nContradiction summary.\n\n## Field Guidance\n\nContradiction guidance.\n\n"
+        "## Source Citations\n\n- Citation\n\n## Related Pages\n\n- None yet.\n",
     )
     _write_markdown(
         publish_root / "source-index" / "honeywell-dc1000-service-manual-rev-3.md",
-        _frontmatter(source_documents=[source_doc], doc_id="honeywell-dc1000-service-manual-rev-3"),
+        _source_index_frontmatter(
+            doc_id="honeywell-dc1000-service-manual-rev-3",
+            source_documents=[
+                {
+                    "doc_id": "honeywell-dc1000-service-manual-rev-3",
+                    "revision": "Rev 3",
+                    "manufacturer": "Honeywell",
+                    "family": "DC1000",
+                }
+            ],
+        ),
     )
     _write_manifest(stage_dir, "kf-20260416-002", files_written=files_written)
 
@@ -350,32 +521,37 @@ def test_validate_publish_output_rejects_invalid_structure_and_duplicate_identit
     (stage_dir / "notes.txt").write_text("outside subtree", encoding="utf-8")
     _write_markdown(
         publish_root / "source-index" / "wrong-name.md",
-        _frontmatter(doc_id="expected-doc-id"),
+        _source_index_frontmatter(doc_id="expected-doc-id"),
     )
     _write_markdown(
-        publish_root / "procedures" / "bad-prefix.md",
-        _frontmatter(bucket_id="honeywell/dc1000/family", topic="startup_procedure"),
+        publish_root / "workflow-guidance" / "bad-prefix.md",
+        _digest_frontmatter(
+            digest_type="workflow-guidance",
+            slug="expected-slug",
+            title="Bad Prefix",
+        ),
+        "## Field Guidance\n\nMissing ordered sections.\n",
     )
     _write_markdown(
         publish_root / "unknown-dir" / "page.md",
-        _frontmatter(),
+        _digest_frontmatter(digest_type="workflow-guidance", slug="unknown-dir-page"),
     )
     _write_markdown(
-        publish_root / "specs" / "honeywell-dc1000-family-first.md",
-        _frontmatter(bucket_id="honeywell/dc1000/family", canonical_identity="duplicate:spec-page"),
+        publish_root / "controllers" / "first-duplicate.md",
+        _digest_frontmatter(digest_type="controller", slug="duplicate-page"),
     )
     _write_markdown(
-        publish_root / "specs" / "honeywell-dc1000-family-second.md",
-        _frontmatter(bucket_id="honeywell/dc1000/family", canonical_identity="duplicate:spec-page"),
+        publish_root / "controllers" / "second-duplicate.md",
+        _digest_frontmatter(digest_type="controller", slug="duplicate-page"),
     )
     _write_manifest(
         stage_dir,
         "kf-20260416-003",
         files_written=[
             "source-index/wrong-name.md",
-            "procedures/bad-prefix.md",
-            "specs/honeywell-dc1000-family-first.md",
-            "specs/honeywell-dc1000-family-second.md",
+            "workflow-guidance/bad-prefix.md",
+            "controllers/first-duplicate.md",
+            "controllers/second-duplicate.md",
         ],
         files_removed=["source-index/not-previously-published.md"],
     )
@@ -386,41 +562,9 @@ def test_validate_publish_output_rejects_invalid_structure_and_duplicate_identit
     assert any("outside allowed subtree" in error for error in report.errors)
     assert any("unrecognized target directory" in error for error in report.errors)
     assert any("filename must match frontmatter doc_id" in error for error in report.errors)
-    assert any("filename must start with bucket slug" in error for error in report.errors)
+    assert any("filename must match frontmatter slug" in error for error in report.errors)
     assert any("duplicate canonical identity" in error for error in report.errors)
     assert any("orphan removal not previously published" in error for error in report.errors)
-
-
-def test_validate_publish_output_accepts_curated_bucket_family_overview_slug(tmp_path: Path) -> None:
-    stage_dir = tmp_path / "data" / "publish" / "kf-20260416-006"
-    publish_root = stage_dir / "repo-wiki" / "knowledge"
-    source_doc = {
-        "doc_id": "rockwell-compactlogix-operation-manual-1769-um007d-en-p",
-        "revision": "1769-UM007D-EN-P",
-        "manufacturer": "Rockwell",
-        "family": "CompactLogix",
-    }
-
-    _write_markdown(
-        publish_root / "manufacturers" / "rockwell" / "pump-station-control-stack" / "_index.md",
-        _frontmatter(
-            source_documents=[source_doc],
-            bucket_id="rockwell/pump-station-control-stack/curated-bucket",
-            page_type="family_overview",
-            title="Rockwell Pump Station Control Stack Family Overview",
-        )
-        | {"family": "Pump Station Control Stack"},
-    )
-    _write_manifest(
-        stage_dir,
-        "kf-20260416-006",
-        files_written=["manufacturers/rockwell/pump-station-control-stack/_index.md"],
-    )
-
-    report = validate_publish_output(stage_dir)
-
-    assert report.valid is True
-    assert report.errors == []
 
 
 def test_publish_validate_cli_reports_success_and_failure(tmp_path: Path) -> None:
@@ -430,18 +574,18 @@ def test_publish_validate_cli_reports_success_and_failure(tmp_path: Path) -> Non
 
     _write_markdown(
         valid_stage_dir / "repo-wiki" / "knowledge" / "source-index" / "doc-1.md",
-        _frontmatter(
+        _source_index_frontmatter(
             doc_id="doc-1",
-            source_documents=[{"doc_id": "doc-1", "manufacturer": "Honeywell", "family": "DC1000"}],
+            source_documents=_source_index_docs("doc-1"),
         ),
     )
     _write_manifest(valid_stage_dir, "kf-20260416-004", files_written=["source-index/doc-1.md"])
 
     _write_markdown(
         invalid_stage_dir / "repo-wiki" / "knowledge" / "source-index" / "wrong.md",
-        _frontmatter(
+        _source_index_frontmatter(
             doc_id="doc-2",
-            source_documents=[{"doc_id": "doc-2", "manufacturer": "Honeywell", "family": "DC1000"}],
+            source_documents=_source_index_docs("doc-2"),
         ),
     )
     _write_manifest(invalid_stage_dir, "kf-20260416-005", files_written=["source-index/wrong.md"])
@@ -466,7 +610,10 @@ def test_list_publish_runs_reports_ready_and_missing_manifest_runs(tmp_path: Pat
 
     _write_markdown(
         valid_stage_dir / "repo-wiki" / "knowledge" / "source-index" / "doc-1.md",
-        _frontmatter(doc_id="doc-1", source_documents=[{"doc_id": "doc-1"}]),
+        _source_index_frontmatter(
+            doc_id="doc-1",
+            source_documents=_source_index_docs("doc-1"),
+        ),
     )
     _write_manifest(valid_stage_dir, "kf-20260416-010", files_written=["source-index/doc-1.md"])
     missing_stage_dir.mkdir(parents=True, exist_ok=True)
@@ -485,7 +632,10 @@ def test_list_publish_runs_validate_flag_returns_valid_or_invalid(tmp_path: Path
 
     _write_markdown(
         valid_stage_dir / "repo-wiki" / "knowledge" / "source-index" / "doc-1.md",
-        _frontmatter(doc_id="doc-1", source_documents=[{"doc_id": "doc-1"}]),
+        _source_index_frontmatter(
+            doc_id="doc-1",
+            source_documents=_source_index_docs("doc-1"),
+        ),
     )
     _write_manifest(valid_stage_dir, "kf-20260416-010", files_written=["source-index/doc-1.md"])
     missing_stage_dir.mkdir(parents=True, exist_ok=True)
@@ -503,7 +653,10 @@ def test_list_publish_runs_id_mismatch_when_manifest_run_id_differs(tmp_path: Pa
 
     _write_markdown(
         stage_dir / "repo-wiki" / "knowledge" / "source-index" / "doc-1.md",
-        _frontmatter(doc_id="doc-1", source_documents=[{"doc_id": "doc-1"}]),
+        _source_index_frontmatter(
+            doc_id="doc-1",
+            source_documents=_source_index_docs("doc-1"),
+        ),
     )
     # Write a manifest file named after the directory but with a mismatched publish_run_id inside
     manifest_path = stage_dir / "repo-wiki" / "knowledge" / "_manifests" / "kf-20260416-010.json"
@@ -538,9 +691,9 @@ def test_publish_log_and_inspect_cli_report_staged_history(tmp_path: Path) -> No
     stage_dir = data_dir / "publish" / "kf-20260416-012"
     _write_markdown(
         stage_dir / "repo-wiki" / "knowledge" / "source-index" / "doc-1.md",
-        _frontmatter(
+        _source_index_frontmatter(
             doc_id="doc-1",
-            source_documents=[{"doc_id": "doc-1", "manufacturer": "Honeywell", "family": "DC1000"}],
+            source_documents=_source_index_docs("doc-1"),
         ),
     )
     _write_manifest(
@@ -588,9 +741,9 @@ def test_create_publish_pr_dry_run_syncs_only_knowledge_subtree(tmp_path: Path) 
 
     _write_markdown(
         publish_root / "source-index" / "new-doc.md",
-        _frontmatter(
+        _source_index_frontmatter(
             doc_id="new-doc",
-            source_documents=[{"doc_id": "new-doc", "manufacturer": "Honeywell", "family": "DC1000"}],
+            source_documents=_source_index_docs("new-doc"),
         ),
     )
     _write_manifest(
@@ -634,9 +787,9 @@ def test_create_publish_pr_creates_commit_and_pr_with_labels(tmp_path: Path) -> 
 
     _write_markdown(
         publish_root / "source-index" / "doc-1.md",
-        _frontmatter(
+        _source_index_frontmatter(
             doc_id="doc-1",
-            source_documents=[{"doc_id": "doc-1", "manufacturer": "Honeywell", "family": "DC1000"}],
+            source_documents=_source_index_docs("doc-1"),
         ),
     )
     _write_manifest(stage_dir, "kf-20260416-007", files_written=["source-index/doc-1.md"])
@@ -691,9 +844,9 @@ def test_publish_pr_cli_reports_dry_run(tmp_path: Path) -> None:
 
     _write_markdown(
         publish_root / "source-index" / "doc-1.md",
-        _frontmatter(
+        _source_index_frontmatter(
             doc_id="doc-1",
-            source_documents=[{"doc_id": "doc-1", "manufacturer": "Honeywell", "family": "DC1000"}],
+            source_documents=_source_index_docs("doc-1"),
         ),
     )
     _write_manifest(stage_dir, "kf-20260416-008", files_written=["source-index/doc-1.md"])
@@ -735,7 +888,10 @@ def test_validate_rejects_manifest_paths_with_dotdot_segments(tmp_path: Path) ->
     publish_root = stage_dir / "repo-wiki" / "knowledge"
     _write_markdown(
         publish_root / "source-index" / "doc-1.md",
-        _frontmatter(doc_id="doc-1", source_documents=[{"doc_id": "doc-1"}]),
+        _source_index_frontmatter(
+            doc_id="doc-1",
+            source_documents=_source_index_docs("doc-1"),
+        ),
     )
     _write_manifest(
         stage_dir,
