@@ -28,6 +28,14 @@ class Procedure(ProvenancedRecord):
             raise ValueError("title must not be blank")
         return cleaned
 
+    @field_validator("tools_required", mode="before")
+    @classmethod
+    def default_missing_tools(cls, value: object) -> object:
+        """Normalize nullable model outputs back to the canonical empty-list default."""
+        if value is None:
+            return []
+        return value
+
     @field_validator("tools_required")
     @classmethod
     def validate_tools(cls, value: list[str]) -> list[str]:
