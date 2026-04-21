@@ -226,7 +226,10 @@ def _render_content(
             "",
         ]
     )
-    low_confidence_threshold = min((flag.min_confidence for flag in review_flags), default=0.75)
+    low_confidence_threshold = min(
+        (flag.min_confidence for flag in review_flags if flag.min_confidence > 0),
+        default=0.75,
+    )
     quality_lines = _render_quality_notes(
         review_flags=review_flags,
         extracted_records=extracted_records,
