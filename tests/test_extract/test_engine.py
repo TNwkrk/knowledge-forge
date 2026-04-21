@@ -593,6 +593,69 @@ def test_extract_section_flags_low_confidence_records_for_review(tmp_path: Path)
     assert payload["reasons"] == ["below_min_confidence"]
 
 
+def test_extract_section_persists_procedure_when_tools_required_is_null(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    doc_id = _register_parsed_fixture(_write_pdf(tmp_path / "manual.pdf"), data_dir)
+    _write_parse_meta(data_dir, doc_id)
+    _write_bucket_assignments(data_dir, doc_id)
+    section = Section(
+        doc_id=doc_id,
+        section_id=f"{doc_id}--installation--001",
+        section_type="installation",
+        title="Complete the Physical Connections of the Network",
+        content=(
+            "After you configure a ring supervisor, complete the physical connection between all nodes. "
+            "Do not fully connect the DLR network until a supervisor is configured."
+        ),
+        page_range=(15, 16),
+        heading_path=["Complete the Physical Connections of the Network"],
+    )
+    client = _FakeClient(
+        {
+            "procedure": [
+                {
+                    **_base_record(),
+                    "title": "Complete the Physical Connections of the Network",
+                    "steps": [
+                        {
+                            **_base_record(),
+                            "source_page_range": {"start_page": 15, "end_page": 16},
+                            "step_number": 1,
+                            "instruction": "Complete the last physical connection after the supervisor is configured.",
+                            "note": None,
+                            "caution": None,
+                            "figure_ref": None,
+                        }
+                    ],
+                    "applicability": None,
+                    "warnings": [],
+                    "tools_required": None,
+                }
+            ],
+            "warning": [
+                {
+                    **_base_record(),
+                    "severity": "warning",
+                    "text": "Do not fully connect the DLR network until a supervisor is configured.",
+                    "context": "Physical network completion",
+                    "applicability": None,
+                }
+            ],
+        }
+    )
+
+    records = extract_section(section, client=client, data_dir=data_dir)
+
+    assert [type(record).__name__ for record in records] == ["Procedure", "Warning"]
+    procedure = next(record for record in records if type(record).__name__ == "Procedure")
+    assert procedure.tools_required == []
+    procedure_path = (
+        data_dir / "extracted" / doc_id / "procedure" / f"{build_record_id(section.section_id, 'procedure', 1)}.json"
+    )
+    payload = json.loads(procedure_path.read_text(encoding="utf-8"))
+    assert payload["tools_required"] == []
+
+
 def test_extract_section_replaces_stale_record_files_and_review_flags(tmp_path: Path) -> None:
     data_dir = tmp_path / "data"
     doc_id = _register_parsed_fixture(_write_pdf(tmp_path / "manual.pdf"), data_dir)

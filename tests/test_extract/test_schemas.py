@@ -284,6 +284,15 @@ def test_extraction_schema_models_reject_invalid_examples(
         model.model_validate(invalid_payload)  # type: ignore[attr-defined]
 
 
+def test_procedure_normalizes_nullable_tools_required_to_empty_list() -> None:
+    payload = deepcopy(VALID_PAYLOADS["procedure"][1])
+    payload["tools_required"] = None
+
+    procedure = Procedure.model_validate(payload)
+
+    assert procedure.tools_required == []
+
+
 def test_schema_registry_contains_all_expected_record_types() -> None:
     assert set(SCHEMA_REGISTRY) == {
         "procedure",
