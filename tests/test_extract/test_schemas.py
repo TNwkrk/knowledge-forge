@@ -293,6 +293,15 @@ def test_procedure_normalizes_nullable_tools_required_to_empty_list() -> None:
     assert procedure.tools_required == []
 
 
+def test_procedure_normalizes_nullable_warnings_to_empty_list() -> None:
+    payload = deepcopy(VALID_PAYLOADS["procedure"][1])
+    payload["warnings"] = None
+
+    procedure = Procedure.model_validate(payload)
+
+    assert procedure.warnings == []
+
+
 def test_schema_registry_contains_all_expected_record_types() -> None:
     assert set(SCHEMA_REGISTRY) == {
         "procedure",

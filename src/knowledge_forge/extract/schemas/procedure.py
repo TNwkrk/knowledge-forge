@@ -36,6 +36,14 @@ class Procedure(ProvenancedRecord):
             return []
         return value
 
+    @field_validator("warnings", mode="before")
+    @classmethod
+    def default_missing_warnings(cls, value: object) -> object:
+        """Normalize nullable model outputs back to the canonical empty-list default."""
+        if value is None:
+            return []
+        return value
+
     @field_validator("tools_required")
     @classmethod
     def validate_tools(cls, value: list[str]) -> list[str]:
