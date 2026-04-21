@@ -21,6 +21,7 @@ from knowledge_forge.extract.provenance import (
     validate_record_provenance,
 )
 from knowledge_forge.extract.repair import repair_extraction
+from knowledge_forge.extract.reviewability import assess_section_reviewability
 from knowledge_forge.extract.schemas import BucketContext, ExtractionSchemaModel, get_json_schema, get_schema_model
 from knowledge_forge.inference import InferenceClient
 from knowledge_forge.inference.config import InferenceConfig
@@ -281,6 +282,18 @@ def execute_work_item(
     retry_policy: RetryPolicy | None = None,
 ) -> ExtractionWorkItemResult:
     """Execute one section/record-type extraction unit and persist safe outputs."""
+    reviewability = assess_section_reviewability(section)
+    if not reviewability.reviewable:
+        return build_skipped_work_item_result(
+            section=section,
+            record_type=record_type,
+            client=client,
+            data_dir=data_dir,
+            min_confidence=min_confidence,
+            reasons=reviewability.reason_codes,
+            messages=reviewability.messages,
+            model_override=model_override,
+        )
     prepared = prepare_extraction_work_item(
         section=section,
         record_type=record_type,
@@ -637,6 +650,57 @@ def build_failed_work_item_result(
         errors=errors,
         review_flag=review_flag,
         repair_attempts=repair_attempts,
+        output_paths=[],
+    )
+
+
+def build_skipped_work_item_result(
+    *,
+    section: Section,
+    record_type: str,
+    client: InferenceClient,
+    data_dir: Path,
+    min_confidence: float,
+    reasons: list[str],
+    messages: list[str],
+    model_override: str | None = None,
+) -> ExtractionWorkItemResult:
+    """Persist review state for a section skipped before expensive inference."""
+    template = load_prompt_template(record_type)
+    model = model_override or template.model or client.config.extraction_model
+    fingerprint = build_extraction_fingerprint(
+        section=section,
+        record_type=record_type,
+        model=model,
+        prompt_template=template,
+    )
+    review_flag = ExtractionReviewFlag(
+        doc_id=section.doc_id,
+        section_id=section.section_id,
+        record_type=record_type,
+        reasons=["section_not_reviewable", *reasons],
+        min_confidence=min_confidence,
+        record_ids=[],
+        record_confidences=[],
+        repair_attempts=0,
+        errors=messages,
+    )
+    target_dir = data_dir / "extracted" / section.doc_id / record_type
+    if target_dir.exists():
+        for stale_path in target_dir.glob(f"{section.section_id}--{record_type}--*.json"):
+            stale_path.unlink()
+    sync_review_flag(review_flag, section=section, record_type=record_type, data_dir=data_dir)
+    return ExtractionWorkItemResult(
+        doc_id=section.doc_id,
+        section_id=section.section_id,
+        record_type=record_type,
+        status="skipped",
+        fingerprint=fingerprint,
+        records=[],
+        record_ids=[],
+        errors=messages,
+        review_flag=review_flag,
+        repair_attempts=0,
         output_paths=[],
     )
 

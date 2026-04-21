@@ -12,6 +12,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from yaml import safe_dump
 
 from knowledge_forge.extract.engine import load_sections
+from knowledge_forge.extract.reviewability import assess_section_reviewability
 from knowledge_forge.extract.schemas import ExtractionSchemaModel, get_schema_model
 from knowledge_forge.intake.importer import get_data_dir, list_manifests, load_manifest
 from knowledge_forge.intake.manifest import STATUS_ORDER, DocumentStatus, ManifestEntry, slugify
@@ -172,6 +173,11 @@ def _render_content(
     extraction_versions = sorted({record.extraction_version for _, _, record in extracted_records})
     parser_versions = sorted({record.parser_version for _, _, record in extracted_records})
     bucket_ids = sorted({context.bucket_id for _, _, record in extracted_records for context in record.bucket_context})
+    reviewability_by_section = {section.section_id: assess_section_reviewability(section) for section in sections}
+    visible_sections = [section for section in sections if reviewability_by_section[section.section_id].reviewable]
+    suppressed_sections = [
+        section for section in sections if not reviewability_by_section[section.section_id].reviewable
+    ]
     lines = [
         f"# Source Manual: {document.manufacturer} {document.family} {document.document_type}",
         "",
@@ -192,7 +198,7 @@ def _render_content(
         "",
     ]
 
-    for section in sections:
+    for section in visible_sections:
         anchor = _anchor(section.title)
         start_page, end_page = section.page_range
         page_label = _format_page_range(start_page, end_page)
@@ -220,11 +226,15 @@ def _render_content(
             "",
         ]
     )
-    low_confidence_threshold = min((flag.min_confidence for flag in review_flags), default=0.75)
+    low_confidence_threshold = min(
+        (flag.min_confidence for flag in review_flags if flag.min_confidence > 0),
+        default=0.75,
+    )
     quality_lines = _render_quality_notes(
         review_flags=review_flags,
         extracted_records=extracted_records,
         low_confidence_threshold=low_confidence_threshold,
+        suppressed_sections=suppressed_sections,
     )
     lines.extend(quality_lines)
 
@@ -251,7 +261,7 @@ def _render_content(
             "",
         ]
     )
-    for section in sections:
+    for section in visible_sections:
         lines.extend(
             [
                 f"### {section.title}",
@@ -285,6 +295,7 @@ def _render_quality_notes(
     review_flags: list[ReviewFlag],
     extracted_records: list[tuple[str, Path, ExtractionSchemaModel]],
     low_confidence_threshold: float = 0.75,
+    suppressed_sections: list[Section] | None = None,
 ) -> list[str]:
     low_confidence_rows = [
         (record_type, record_path.stem, record.confidence)
@@ -292,7 +303,7 @@ def _render_quality_notes(
         if record.confidence < low_confidence_threshold
     ]
     lines: list[str] = []
-    if not low_confidence_rows and not review_flags:
+    if not low_confidence_rows and not review_flags and not suppressed_sections:
         return ["- No low-confidence or flagged extractions."]
 
     if low_confidence_rows:
@@ -310,6 +321,12 @@ def _render_quality_notes(
             )
             if flag.errors:
                 lines.append(f"    Errors: {'; '.join(flag.errors)}")
+    if suppressed_sections:
+        examples = ", ".join(f"`{section.title}`" for section in suppressed_sections[:5])
+        lines.append(
+            f"- Suppressed non-reviewable sections from reviewer-facing output: {len(suppressed_sections)}"
+            + (f" (examples: {examples})" if examples else "")
+        )
     return lines
 
 

@@ -211,6 +211,7 @@ Extraction responses are validated against JSON schemas:
   2. If still invalid, relax schema constraints and retry
   3. If still invalid, flag for manual review
 - Confidence scoring is applied after validation using schema validity, whether repair was needed, parse quality, and output-token headroom
+- Before extraction dispatch, section-level reviewability heuristics now flag obvious junk headings such as single-letter titles, generic carryovers like `continued` or `IMPORTANT`, numeric fragments, and table-of-contents blobs so they can be skipped with an explicit review artifact instead of spending inference silently
 - `kf extract --min-confidence <threshold>` writes review flags under `data/extracted/{doc_id}/reviews/` for records that need inspection
 - Compilation responses are validated for required frontmatter fields and structural completeness
 

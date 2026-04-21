@@ -18,6 +18,7 @@ from knowledge_forge.extract.engine import (
     ExtractionFingerprint,
     ExtractionWorkItemResult,
     build_extraction_fingerprint,
+    build_skipped_work_item_result,
     execute_work_item,
     load_prompt_template,
     load_section_quality,
@@ -28,6 +29,7 @@ from knowledge_forge.extract.engine import (
     utc_now,
 )
 from knowledge_forge.extract.provenance import load_bucket_context, load_parse_metadata
+from knowledge_forge.extract.reviewability import assess_section_reviewability
 from knowledge_forge.inference import (
     BatchBuilder,
     BatchFailure,
@@ -279,7 +281,7 @@ def create_extraction_run(
     run_id = _next_run_id(resolved_data_dir, today=now.date())
     documents = _build_document_scopes(doc_ids, section_ids=section_ids)
     client = InferenceClient(config, data_dir=resolved_data_dir)
-    items = _build_run_items(documents, client=client, data_dir=resolved_data_dir)
+    items = _build_run_items(documents, client=client, data_dir=resolved_data_dir, min_confidence=min_confidence)
     run = ExtractionRun(
         run_id=run_id,
         created_at=now,
@@ -479,6 +481,7 @@ def _build_run_items(
     *,
     client: InferenceClient,
     data_dir: Path,
+    min_confidence: float = 0.0,
 ) -> list[ExtractionRunItem]:
     items: list[ExtractionRunItem] = []
     for document in documents:
@@ -490,6 +493,7 @@ def _build_run_items(
                 missing = sorted(requested - {section.section_id for section in sections})
                 raise FileNotFoundError(f"sections not found for doc_id '{document.doc_id}': {', '.join(missing)}")
         for section in sections:
+            reviewability = assess_section_reviewability(section)
             for record_type in record_types_for_section_type(section.section_type):
                 template = load_prompt_template(record_type)
                 model = template.model or client.config.extraction_model
@@ -499,6 +503,32 @@ def _build_run_items(
                     model=model,
                     prompt_template=template,
                 )
+                if not reviewability.reviewable:
+                    skipped = build_skipped_work_item_result(
+                        section=section,
+                        record_type=record_type,
+                        client=client,
+                        data_dir=data_dir,
+                        min_confidence=min_confidence,
+                        reasons=reviewability.reason_codes,
+                        messages=reviewability.messages,
+                        model_override=model,
+                    )
+                    items.append(
+                        ExtractionRunItem(
+                            item_id=f"{section.section_id}::{record_type}",
+                            doc_id=document.doc_id,
+                            section_id=section.section_id,
+                            section_type=section.section_type,
+                            record_type=record_type,
+                            fingerprint=skipped.fingerprint,
+                            status=ExtractionRunItemStatus.SKIPPED,
+                            last_error="; ".join(skipped.errors) if skipped.errors else None,
+                            completed_at=utc_now(),
+                            selected_model=skipped.fingerprint.model,
+                        )
+                    )
+                    continue
                 items.append(
                     ExtractionRunItem(
                         item_id=f"{section.section_id}::{record_type}",
@@ -751,7 +781,37 @@ def _execute_batch_strategy(
         prepared_items = [
             _prepare_scheduled_item(run, index=index, client=client, data_dir=data_dir) for index in pending_indexes
         ]
-        chunk = _build_batch_chunk(run, prepared_items)
+        reviewable_prepared_items: list[_PreparedScheduledItem] = []
+        for prepared_item in prepared_items:
+            section = prepared_item.prepared.section
+            reviewability = assess_section_reviewability(section)
+            if not reviewability.reviewable:
+                skipped = build_skipped_work_item_result(
+                    section=section,
+                    record_type=run.items[prepared_item.item_index].record_type,
+                    client=client,
+                    data_dir=data_dir,
+                    min_confidence=run.min_confidence,
+                    reasons=reviewability.reason_codes,
+                    messages=reviewability.messages,
+                    model_override=prepared_item.selected_model,
+                )
+                run.items[prepared_item.item_index] = run.items[prepared_item.item_index].model_copy(
+                    update={
+                        "status": ExtractionRunItemStatus.SKIPPED,
+                        "last_error": "; ".join(skipped.errors) if skipped.errors else None,
+                        "completed_at": utc_now(),
+                        "selected_model": prepared_item.selected_model,
+                    }
+                )
+            else:
+                reviewable_prepared_items.append(prepared_item)
+        if not reviewable_prepared_items:
+            run = _refresh_run_metrics(run.model_copy(update={"updated_at": utc_now()}))
+            save_extraction_run(run, data_dir=data_dir)
+            _sync_completed_document_statuses(run, data_dir=data_dir)
+            continue
+        chunk = _build_batch_chunk(run, reviewable_prepared_items)
 
         batch_requests = len(chunk)
         batch_tokens = sum(item.estimated_total_tokens for item in chunk)
@@ -1173,7 +1233,12 @@ def _update_item_from_result(
     *,
     dispatch_mode: str,
 ) -> ExtractionRunItem:
-    status = ExtractionRunItemStatus.SUCCEEDED if result.status == "succeeded" else ExtractionRunItemStatus.FAILED
+    if result.status == "succeeded":
+        status = ExtractionRunItemStatus.SUCCEEDED
+    elif result.status == "skipped":
+        status = ExtractionRunItemStatus.SKIPPED
+    else:
+        status = ExtractionRunItemStatus.FAILED
     error = None if not result.errors else "; ".join(result.errors)
     return item.model_copy(
         update={

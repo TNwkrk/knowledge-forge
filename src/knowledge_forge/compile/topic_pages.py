@@ -22,6 +22,7 @@ from knowledge_forge.compile.source_pages import (
     CompileMetadata,
 )
 from knowledge_forge.extract.engine import load_sections
+from knowledge_forge.extract.reviewability import assess_section_reviewability
 from knowledge_forge.extract.schemas import (
     AlarmDefinition,
     Applicability,
@@ -71,6 +72,7 @@ TOPIC_RECORD_TYPE_MAP: dict[str, set[str]] = {
     "specifications": {"spec_value"},
     "troubleshooting": {"troubleshooting_entry"},
 }
+OTHER_SECTION_MIN_CONFIDENCE = 0.8
 
 
 @dataclass(frozen=True)
@@ -279,6 +281,10 @@ def classify_topic(entry: TopicRecord) -> str | None:
             continue
         if entry.section.section_type not in TOPIC_SECTION_TYPE_MAP[topic]:
             continue
+        if entry.section.section_type == "other":
+            assessment = assess_section_reviewability(entry.section)
+            if not assessment.reviewable or entry.record.confidence < OTHER_SECTION_MIN_CONFIDENCE:
+                continue
         return topic
     return None
 
