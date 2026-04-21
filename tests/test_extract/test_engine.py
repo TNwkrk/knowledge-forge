@@ -650,11 +650,7 @@ def test_extract_section_persists_procedure_when_tools_required_is_null(tmp_path
     procedure = next(record for record in records if type(record).__name__ == "Procedure")
     assert procedure.tools_required == []
     procedure_path = (
-        data_dir
-        / "extracted"
-        / doc_id
-        / "procedure"
-        / f"{build_record_id(section.section_id, 'procedure', 1)}.json"
+        data_dir / "extracted" / doc_id / "procedure" / f"{build_record_id(section.section_id, 'procedure', 1)}.json"
     )
     payload = json.loads(procedure_path.read_text(encoding="utf-8"))
     assert payload["tools_required"] == []
