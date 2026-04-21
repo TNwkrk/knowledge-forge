@@ -460,11 +460,7 @@ def _prepare_run_for_execution(
             )
         updated_items.append(item_update)
 
-    scheduler = (
-        run.scheduler
-        if isinstance(run.scheduler, ExtractionRunSchedulerSettings)
-        else _scheduler_settings_from_config(client.config)
-    )
+    scheduler = _scheduler_settings_from_config(client.config)
     return _refresh_run_metrics(
         run.model_copy(update={"items": updated_items, "updated_at": utc_now(), "scheduler": scheduler})
     )
