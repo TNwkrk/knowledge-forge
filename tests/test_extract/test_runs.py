@@ -247,6 +247,39 @@ def test_partial_run_persists_checkpoint_and_resume_skips_completed_items(monkey
     assert load_manifest(data_dir, doc_id).document.status == DocumentStatus.EXTRACTED
 
 
+def test_resume_persists_scheduler_overrides_into_run_metadata(monkeypatch, tmp_path: Path) -> None:
+    data_dir, doc_id = _make_run_fixture(tmp_path)
+    base_config = _FakeConfig(
+        strategy=ExtractionStrategy.DIRECT_SERIAL,
+        max_requests_per_minute=500,
+        max_tokens_per_minute=30000,
+        direct_concurrency=1,
+    )
+    override_config = _FakeConfig(
+        strategy=ExtractionStrategy.DIRECT_LIMITED,
+        max_requests_per_minute=500,
+        max_tokens_per_minute=60000,
+        direct_concurrency=8,
+    )
+    monkeypatch.setattr("knowledge_forge.extract.runs.InferenceClient", _FingerprintOnlyClient)
+    run = create_extraction_run([doc_id], config=base_config, data_dir=data_dir)
+
+    def interrupting_execute_work_item(**kwargs):
+        raise RuntimeError("simulated interruption")
+
+    monkeypatch.setattr("knowledge_forge.extract.runs.execute_work_item", interrupting_execute_work_item)
+
+    with pytest.raises(RuntimeError, match="simulated interruption"):
+        resume_extraction_run(run.run_id, config=override_config, data_dir=data_dir)
+
+    resumed = load_extraction_run(run.run_id, data_dir=data_dir)
+
+    assert resumed.scheduler.strategy == ExtractionStrategy.DIRECT_LIMITED
+    assert resumed.scheduler.max_requests_per_minute == 500
+    assert resumed.scheduler.max_tokens_per_minute == 60000
+    assert resumed.scheduler.direct_concurrency == 8
+
+
 def test_retry_failed_items_preserves_prior_successful_work(monkeypatch, tmp_path: Path) -> None:
     data_dir, doc_id = _make_run_fixture(tmp_path)
     config = _FakeConfig()
@@ -288,6 +321,58 @@ def test_retry_failed_items_preserves_prior_successful_work(monkeypatch, tmp_pat
     assert retried_items["procedure"].attempt_count == 1
     assert retried_items["warning"].attempt_count == 2
     assert load_manifest(data_dir, doc_id).document.status == DocumentStatus.EXTRACTED
+
+
+def test_retry_failed_persists_scheduler_overrides_into_run_metadata(monkeypatch, tmp_path: Path) -> None:
+    data_dir, doc_id = _make_run_fixture(tmp_path)
+    base_config = _FakeConfig(
+        strategy=ExtractionStrategy.DIRECT_SERIAL,
+        max_requests_per_minute=500,
+        max_tokens_per_minute=30000,
+        direct_concurrency=1,
+    )
+    override_config = _FakeConfig(
+        strategy=ExtractionStrategy.DIRECT_LIMITED,
+        max_requests_per_minute=500,
+        max_tokens_per_minute=60000,
+        direct_concurrency=8,
+    )
+    monkeypatch.setattr("knowledge_forge.extract.runs.InferenceClient", _FingerprintOnlyClient)
+    run = create_extraction_run([doc_id], config=base_config, data_dir=data_dir)
+    warning_item = next(item for item in run.items if item.record_type == "warning")
+    save_extraction_run(
+        run.model_copy(
+            update={
+                "items": [
+                    item.model_copy(update={"status": ExtractionRunItemStatus.FAILED, "last_error": "repair failed"})
+                    if item.item_id == warning_item.item_id
+                    else item.model_copy(
+                        update={
+                            "status": ExtractionRunItemStatus.SUCCEEDED,
+                            "record_ids": ["procedure-success"],
+                        }
+                    )
+                    for item in run.items
+                ]
+            }
+        ),
+        data_dir=data_dir,
+    )
+
+    def interrupting_execute_work_item(**kwargs):
+        raise RuntimeError("simulated retry interruption")
+
+    monkeypatch.setattr("knowledge_forge.extract.runs.execute_work_item", interrupting_execute_work_item)
+
+    with pytest.raises(RuntimeError, match="simulated retry interruption"):
+        retry_failed_extraction_run(run.run_id, config=override_config, data_dir=data_dir)
+
+    retried = load_extraction_run(run.run_id, data_dir=data_dir)
+
+    assert retried.scheduler.strategy == ExtractionStrategy.DIRECT_LIMITED
+    assert retried.scheduler.max_requests_per_minute == 500
+    assert retried.scheduler.max_tokens_per_minute == 60000
+    assert retried.scheduler.direct_concurrency == 8
 
 
 def test_scheduler_enforces_rolling_token_budget_before_dispatch(monkeypatch, tmp_path: Path) -> None:
