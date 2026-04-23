@@ -2,16 +2,43 @@
 
 ## Source material coverage
 
-The pipeline must progressively support the full field-service knowledge corpus,
-not just OEM manuals. See `README.md § Source material scope` for the complete
-taxonomy. Phases below should be read with that broader scope in mind:
+The pipeline must support the full field-service knowledge corpus, not just OEM
+manuals. See `README.md § Source material scope` for the complete taxonomy.
+Phases below should be read with that broader scope in mind:
 
-- **Phases 1–4** are format-agnostic in design but PDF-first in current implementation.
-- **Phase 6** extraction schemas currently target manual-style records. Additional
-  schemas for operational documents (SOPs, checklists, safety/permit records,
-  inspection forms) should be added as those source families enter the pipeline.
-- **Phase 10** first-corpus onboarding should include at least one non-manual
-  source family (e.g. an SOP or checklist) to validate broader intake coverage.
+- **Phases 1–4** are format-agnostic in design but PDF-first in current implementation. As operational document classes (SOPs, checklists, inspection and service forms, drawings, controller screenshots, correspondence) begin arriving from FlowCommander promotions, each intake and parsing stage must extend — not gate — on them.
+- **Phase 6** extraction schemas currently target manual-style records. Schemas for operational documents (SOPs, checklists, safety/permit records, inspection forms, service forms) are in scope from intake forward, not deferred to a "future" phase.
+- **Phase 10** first-corpus onboarding should include at least one non-manual source family (e.g. an SOP, inspection form, or checklist) to validate broader intake coverage.
+
+## Two intake paths
+
+Knowledge Forge accepts source material along two intake paths, both of which
+must be supported by the pipeline:
+
+1. **Curated source packs** (bootstrap + controlled operator corpus) —
+   `config/source-packs/*.yaml` manifests manually assembled by the Knowledge
+   Forge operator. This is the current primary path and how the Rockwell
+   corpus onboards.
+2. **Promoted candidate source packs from FlowCommander** (steady state) —
+   explicit editorial promotions pushed by FlowCommander office / admin staff.
+   These carry FC-side scope metadata (customer / site / station / work-order
+   context), document-class hints, promoter rationale, and back-references to
+   FlowCommander artifact IDs. Knowledge Forge applies guardrails and may
+   reject or downgrade low-signal promotions, with rejections surfaced back to
+   the FC promoter.
+
+The FlowCommander-side half of this contract is canonical in
+[`FlowCommander/docs/operational-intake-model.md`](https://github.com/TNwkrk/FlowCommander/blob/main/docs/operational-intake-model.md).
+The Knowledge Forge-side ingest contract for promoted packs is tracked as its
+own workstream in the phase table below.
+
+## Scoped publishing is a future extension
+
+The current publish contract covers global reference material only (controller
+family, fault codes, symptoms, workflow guidance, contradictions, supersessions,
+source-index). Customer / site / station / asset-scoped publishing is a
+**future extension** of the publish contract, not an assumed capability. Do not
+generate scoped pages until the FlowCommander-side contract is extended.
 
 ## Phased implementation plan
 

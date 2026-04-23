@@ -3,15 +3,17 @@
 Knowledge Forge is a local-first or self-hosted technical document digestion system for turning field-service source materials into trustworthy, reviewable knowledge artifacts.
 
 Its job is to:
-- register and classify technical source documents
+- accept *promoted candidate source packs* from FlowCommander (and curated source packs during bootstrap) covering authoritative technical documents, operational documents, and future source families
+- register and classify those source documents
 - pre-bucket them before heavy processing
 - normalize and parse technical documents (PDF, DOCX, XLSX, HTML, images, and other supported formats)
 - use the OpenAI API to extract canonical knowledge records
 - use the OpenAI API to compile human-readable wiki pages
 - detect contradiction and supersession candidates
+- apply guardrails so low-signal operational material does not become published knowledge
 - publish approved wiki output into the FlowCommander `repo-wiki` by pull request
 
-Knowledge Forge is a separate system from FlowCommander. Hosted Supabase may store approved outputs later for retrieval, but it is **not** responsible for the digestion pipeline.
+Knowledge Forge is a separate system from FlowCommander. FlowCommander owns operational intake (field photos, emailed attachments, startup sheets, winterization docs, inspection forms, job PDFs, drawings, controller screenshots, service correspondence, notes) and the editorial *promotion* action that turns selected operational material into a Knowledge Forge candidate source pack. Knowledge Forge does not read FlowCommander's operational tables on its own. Hosted Supabase may store approved outputs later for retrieval, but it is **not** responsible for the digestion pipeline. See the FlowCommander-side canonical model in [`FlowCommander/docs/operational-intake-model.md`](https://github.com/TNwkrk/FlowCommander/blob/main/docs/operational-intake-model.md).
 
 ## Source material scope
 
@@ -229,12 +231,14 @@ hint used only for bucket assignment and cross-source compilation.
 ## Goals
 
 ### Primary goals
-- build a reliable backlog-digestion pipeline for manuals
-- pre-bucket manuals before LLM processing
+- build a reliable digestion pipeline for the full field-service source corpus — authoritative technical documents first, operational documents progressively, and future source families over time
+- pre-bucket source documents (manuals, bulletins, SOPs, checklists, forms, drawings, and other classes) before LLM processing
+- accept *promoted candidate source packs* pushed from FlowCommander as a first-class intake path, alongside curated source packs during bootstrap
 - use the OpenAI API for schema-bound extraction and wiki compilation
 - produce a human-readable compiled wiki
+- apply guardrails so low-signal operational material (e.g. ambiguous correspondence, unlabeled field photos) does not become published knowledge, and surface rejections back to the FlowCommander promoter
 - publish approved wiki artifacts into FlowCommander by PR
-- preserve provenance and rerun safety
+- preserve provenance and rerun safety, including back-references to originating FlowCommander artifact IDs where applicable
 - leave room for future Ask AI integration
 
 ### Non-goals for v1
