@@ -388,6 +388,23 @@ def test_stage_publish_maps_contradiction_notes_to_analysis_subtree(tmp_path: Pa
         frontmatter=_frontmatter(
             title="Contradiction Notes: honeywell/dc1000/family",
             bucket_id="honeywell/dc1000/family",
+            source_documents=[
+                _source_doc(locator='section "Startup Procedure" (p.18)'),
+                _source_doc(
+                    doc_id="honeywell-dc1000-sop-rev-3",
+                    title="Honeywell DC1000 SOP (Rev 3)",
+                    locator='section "Startup Procedure" (p.21)',
+                ),
+            ],
+        ),
+        content=(
+            "# Contradiction Notes for honeywell/dc1000/family\n\n"
+            "## Summary\n\n"
+            "- 1 contradiction candidate was identified.\n\n"
+            "## Field Guidance\n\n"
+            "### Candidate 1: Startup step 1\n"
+            "- Claim A: `Open the valve.` from `honeywell-dc1000-service-manual-rev-3`\n"
+            "- Claim B: `Do not open the valve.` from `honeywell-dc1000-sop-rev-3`\n"
         ),
     )
 
@@ -399,6 +416,10 @@ def test_stage_publish_maps_contradiction_notes_to_analysis_subtree(tmp_path: Pa
     contradiction_text = contradiction_path.read_text(encoding="utf-8")
     assert "digest_type: contradiction" in contradiction_text
     assert "resolution_status: needs-review" in contradiction_text
+    assert "## Summary" in contradiction_text
+    assert "### Candidate 1: Startup step 1" in contradiction_text
+    assert 'section "Startup Procedure" (p.18)' in contradiction_text
+    assert 'section "Startup Procedure" (p.21)' in contradiction_text
     assert validate_publish_output(staged.stage_dir).valid is True
 
 
