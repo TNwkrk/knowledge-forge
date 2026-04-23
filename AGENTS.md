@@ -3,16 +3,25 @@
 ## Project
 Knowledge Forge is a separate repository in the broader FlowCommander project.
 
-Its job is to turn manuals and other technical source material into reviewable,
-human-readable knowledge artifacts that can later be proposed to FlowCommander
-through a pull request workflow.
+Its job is to turn *promoted candidate source packs* — manuals, bulletins,
+SOPs, checklists, inspection and service forms, drawings, and other
+field-service source material — into reviewable, human-readable knowledge
+artifacts that can be proposed back to FlowCommander through a pull request
+workflow. Knowledge Forge is the refinement engine; FlowCommander is the
+operational intake surface and the downstream consumer of approved knowledge.
 
 Core responsibilities:
-- intake and manifesting
-- pre-bucketing and parsing preparation
+- intake and manifesting of candidate source packs (curated during bootstrap, promoted from FlowCommander in steady state)
+- pre-bucketing and parsing preparation across the full source taxonomy (not manuals only)
 - structured extraction and wiki compilation
-- provenance-preserving staging for publish
+- contradiction and supersession analysis
+- guardrails that reject or downgrade low-signal operational material so it does not become published knowledge, with rejections visible back to the FlowCommander promoter
+- provenance-preserving staging for publish, including back-references to originating FlowCommander artifact IDs where applicable
 - PR-based publication into FlowCommander `repo-wiki/knowledge/`
+
+Out of scope:
+- reading FlowCommander's operational tables directly
+- publishing customer/site/station-scoped knowledge until the publish contract is explicitly extended for scoped targets
 
 Primary priorities:
 - trustworthy generated artifacts
