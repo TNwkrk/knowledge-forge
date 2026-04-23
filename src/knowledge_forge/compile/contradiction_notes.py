@@ -434,7 +434,7 @@ def _claim_line(claim: ComparableClaim) -> str:
     citation = _page_label(claim)
     return (
         f"`{claim.claim_text}` from `{claim.doc_id}` "
-        f"({claim.document_type}, section \"{claim.record.source_heading}\", {citation}, "
+        f'({claim.document_type}, section "{claim.record.source_heading}", {citation}, '
         f"{claim.precedence_label}, level {claim.precedence_level})"
     )
 
@@ -443,7 +443,7 @@ def _review_claim_line(label: str, claim: ComparableClaim) -> str:
     citation = _page_label(claim)
     return (
         f"- {label}: `{claim.claim_text}` from `{claim.doc_id}` "
-        f"(`{claim.document_type}`, section \"{claim.record.source_heading}\", {citation}, "
+        f'(`{claim.document_type}`, section "{claim.record.source_heading}", {citation}, '
         f"{claim.precedence_label}, level {claim.precedence_level})"
     )
 
@@ -537,7 +537,7 @@ def _retained_guidance_text(entry: ContradictionNoteEntry) -> str:
         return "No claim should be retained automatically yet."
     preferred, deferred = sorted((entry.left, entry.right), key=lambda claim: claim.precedence_level)
     return (
-        f"Prefer `{preferred.doc_id}` ({preferred.document_type}, section \"{preferred.record.source_heading}\", "
+        f'Prefer `{preferred.doc_id}` ({preferred.document_type}, section "{preferred.record.source_heading}", '
         f"{_page_label(preferred)}) over `{deferred.doc_id}`."
     )
 
@@ -545,16 +545,14 @@ def _retained_guidance_text(entry: ContradictionNoteEntry) -> str:
 def _review_needed_text(entry: ContradictionNoteEntry) -> str:
     if _is_unresolved(entry):
         return "Reviewer confirmation is required before this contradiction can be resolved downstream."
-    return (
-        "Review the lower-precedence claim for any local-context exception before finalizing the retained guidance."
-    )
+    return "Review the lower-precedence claim for any local-context exception before finalizing the retained guidance."
 
 
 def _build_source_documents(entries: list[ContradictionNoteEntry]) -> list[dict[str, Any]]:
     documents: dict[tuple[str, str], dict[str, Any]] = {}
     for entry in entries:
         for claim in (entry.left, entry.right):
-            key = (claim.doc_id, f'{claim.record.source_heading}|{_page_label(claim)}')
+            key = (claim.doc_id, f"{claim.record.source_heading}|{_page_label(claim)}")
             document = claim.manifest.document
             locator = f'section "{claim.record.source_heading}" ({_page_label(claim)})'
             documents.setdefault(
