@@ -93,11 +93,11 @@ DOCTOR_ENV_VARS = [
     "SYMPHONY_WORKSPACE_ROOT",
 ]
 
-VALIDATE_COMMANDS = [
-    ("ruff check .", ["ruff", "check", "."]),
-    ("ruff format --check .", ["ruff", "format", "--check", "."]),
-    ("python -m pytest", [sys.executable, "-m", "pytest"]),
-    ("git diff --check", ["git", "diff", "--check"]),
+VALIDATE_COMMANDS: list[list[str]] = [
+    ["ruff", "check", "."],
+    ["ruff", "format", "--check", "."],
+    [sys.executable, "-m", "pytest"],
+    ["git", "diff", "--check"],
 ]
 
 
@@ -230,7 +230,8 @@ def docs_check() -> None:
 def validate() -> None:
     """Run the local lint, format, test, and whitespace validation suite."""
     repo_root = _repo_root()
-    for display, command in VALIDATE_COMMANDS:
+    for command in VALIDATE_COMMANDS:
+        display = " ".join(command)
         click.echo(f"$ {display}")
         result = subprocess.run(command, cwd=repo_root, check=False)
         if result.returncode != 0:
