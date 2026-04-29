@@ -159,11 +159,32 @@ def doctor(strict: bool) -> None:
 
     branch = _git_output(["git", "branch", "--show-current"], repo_root)
     commit = _git_output(["git", "rev-parse", "HEAD"], repo_root)
-    status = _git_output(["git", "status", "--porcelain"], repo_root)
-    clean = status == ""
+    clean: bool | None
+    try:
+        status_process = subprocess.run(
+            ["git", "status", "--porcelain"],
+            cwd=repo_root,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except OSError:
+        clean = None
+    else:
+        if status_process.returncode == 0:
+            clean = status_process.stdout.strip() == ""
+        else:
+            clean = None
+
+    if clean is None:
+        warnings.append("git working tree status unavailable")
+        clean_display = "unknown"
+    else:
+        clean_display = "yes" if clean else "no"
+
     click.echo(f"Current branch: {branch or 'unknown'}")
     click.echo(f"Latest commit: {commit or 'unknown'}")
-    click.echo(f"Working tree clean: {'yes' if clean else 'no'}")
+    click.echo(f"Working tree clean: {clean_display}")
 
     click.echo("Required paths:")
     for relative_path in CORE_DOC_PATHS:
