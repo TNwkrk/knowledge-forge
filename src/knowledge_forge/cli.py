@@ -198,14 +198,15 @@ def doctor(strict: bool) -> None:
         present = bool(os.environ.get(name))
         click.echo(f"  {name}: {'present' if present else 'missing'}")
         if not present:
-            warnings.append(f"missing optional environment variable: {name}")
+            if strict:
+                failures.append(f"missing required environment variable: {name}")
+            else:
+                warnings.append(f"missing optional environment variable: {name}")
 
     if warnings:
         click.echo("Warnings:")
         for warning in warnings:
             click.echo(f"  warn {warning}")
-        if strict:
-            failures.extend(warnings)
 
     if failures:
         raise click.ClickException("; ".join(failures))
