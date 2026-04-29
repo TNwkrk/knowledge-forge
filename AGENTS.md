@@ -69,6 +69,8 @@ Primary priorities:
 ## Canonical References
 - `README.md` explains the repo's purpose, scope, and FlowCommander boundary.
 - `AGENTS.md` is the top-level operating rules document for agents.
+- `WORKFLOW.md` is the Symphony/Codex issue-execution contract for isolated,
+  one-issue-at-a-time autonomous runs.
 - `docs/codex-issue-runbook.md` is the standard issue-worker runbook.
 - `docs/roadmap.md` is the source of truth for phased issue sequencing.
 - `docs/publish-contract.md` defines the downstream publish contract.
@@ -78,6 +80,8 @@ Primary priorities:
 
 ## Start Here
 - Before meaningful work, read `AGENTS.md`, `README.md`, and `docs/roadmap.md` first.
+- For Symphony-style autonomous issue execution, also read `WORKFLOW.md` before
+  starting the issue loop.
 - For publish-boundary or downstream handoff work, also read `docs/publish-contract.md` and `docs/agent-workflow.md` before editing.
 - Keep scope honest to the current roadmap phase. Do not describe unfinished pipeline stages as if they already exist.
 - Use local FlowCommander inspection for comparison and publish preparation, not as permission for direct downstream mutation.
@@ -149,6 +153,11 @@ Primary priorities:
 ## Build and Test
 - Before changing code, inspect the repo and document the real install, lint,
   test, and validation commands that exist.
+- Run `kf doctor` before non-trivial work when practical to capture local
+  Python, git, required-doc, and environment readiness without printing secrets.
+- Run `kf docs-check` for docs, workflow, publish-boundary, or handoff changes.
+- Run `kf validate` before opening a PR when practical; it runs the local ruff,
+  pytest, and whitespace checks and reports only commands that actually ran.
 - If commands do not exist yet, report that clearly rather than inventing a fake
   workflow.
 - For this repo's current bootstrap state, docs and scaffolding consistency are
