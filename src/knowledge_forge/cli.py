@@ -5,8 +5,10 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+import sys
 import urllib.error
 from datetime import date
+from importlib import import_module
 from pathlib import Path
 
 import click
@@ -62,6 +64,42 @@ from knowledge_forge.publish import (
     validate_publish_output,
 )
 
+CORE_DOC_PATHS = [
+    Path("WORKFLOW.md"),
+    Path("AGENTS.md"),
+    Path("README.md"),
+    Path("pyproject.toml"),
+    Path("docs/roadmap.md"),
+    Path("docs/publish-contract.md"),
+    Path("docs/repo-structure.md"),
+    Path("docs/codex-issue-runbook.md"),
+    Path("docs/agent-workflow.md"),
+    Path("docs/evals.md"),
+    Path("data/README.md"),
+]
+
+DOC_REFERENCE_CHECKS = [
+    (Path("README.md"), ["AGENTS.md", "docs/publish-contract.md"]),
+    (Path("AGENTS.md"), ["docs/codex-issue-runbook.md"]),
+    (Path("docs/codex-issue-runbook.md"), ["AGENTS.md"]),
+    (Path("WORKFLOW.md"), ["AGENTS.md", "docs/codex-issue-runbook.md"]),
+]
+
+DOCTOR_ENV_VARS = [
+    "OPENAI_API_KEY",
+    "KNOWLEDGE_FORGE_DATA_DIR",
+    "FLOWCOMMANDER_REPO_PATH",
+    "GITHUB_TOKEN",
+    "SYMPHONY_WORKSPACE_ROOT",
+]
+
+VALIDATE_COMMANDS = [
+    ("ruff check .", ["ruff", "check", "."]),
+    ("ruff format --check .", ["ruff", "format", "--check", "."]),
+    ("python -m pytest", [sys.executable, "-m", "pytest"]),
+    ("git diff --check", ["git", "diff", "--check"]),
+]
+
 
 @click.group(help="Knowledge Forge command line interface.")
 def cli() -> None:
@@ -96,6 +134,87 @@ def analyze() -> None:
 @cli.group(help="Run lightweight benchmark evaluations against committed fixture sets.")
 def eval() -> None:
     """Evaluation command group."""
+
+
+@cli.command("doctor")
+@click.option("--strict", is_flag=True, help="Fail when optional environment variables are missing.")
+def doctor(strict: bool) -> None:
+    """Report local repo readiness for Codex/Symphony issue execution."""
+    repo_root = _repo_root()
+    failures: list[str] = []
+    warnings: list[str] = []
+
+    click.echo("Knowledge Forge doctor")
+    click.echo(f"Repo root: {repo_root}")
+    click.echo(f"Python: {sys.version.split()[0]} ({sys.executable})")
+
+    try:
+        package = import_module("knowledge_forge")
+    except Exception as exc:  # pragma: no cover - defensive import diagnostics
+        failures.append(f"package import failed: {exc}")
+        click.echo(f"Package import: fail ({exc})")
+    else:
+        version = getattr(package, "__version__", "unknown")
+        click.echo(f"Package import: ok (knowledge_forge {version})")
+
+    branch = _git_output(["git", "branch", "--show-current"], repo_root)
+    commit = _git_output(["git", "rev-parse", "HEAD"], repo_root)
+    status = _git_output(["git", "status", "--porcelain"], repo_root)
+    clean = status == ""
+    click.echo(f"Current branch: {branch or 'unknown'}")
+    click.echo(f"Latest commit: {commit or 'unknown'}")
+    click.echo(f"Working tree clean: {'yes' if clean else 'no'}")
+
+    click.echo("Required paths:")
+    for relative_path in CORE_DOC_PATHS:
+        exists = (repo_root / relative_path).exists()
+        click.echo(f"  {'ok' if exists else 'missing'} {relative_path}")
+        if not exists:
+            failures.append(f"missing path: {relative_path}")
+
+    click.echo("Environment:")
+    for name in DOCTOR_ENV_VARS:
+        present = bool(os.environ.get(name))
+        click.echo(f"  {name}: {'present' if present else 'missing'}")
+        if not present:
+            warnings.append(f"missing optional environment variable: {name}")
+
+    if warnings:
+        click.echo("Warnings:")
+        for warning in warnings:
+            click.echo(f"  warn {warning}")
+        if strict:
+            failures.extend(warnings)
+
+    if failures:
+        raise click.ClickException("; ".join(failures))
+
+
+@cli.command("docs-check")
+def docs_check() -> None:
+    """Verify core docs exist and cross-reference the issue workflow contract."""
+    repo_root = _repo_root()
+    failures = _docs_check_failures(repo_root)
+
+    if failures:
+        for failure in failures:
+            click.echo(f"fail {failure}")
+        raise click.ClickException("docs check failed")
+
+    click.echo("Docs check passed")
+
+
+@cli.command("validate")
+def validate() -> None:
+    """Run the local lint, format, test, and whitespace validation suite."""
+    repo_root = _repo_root()
+    for display, command in VALIDATE_COMMANDS:
+        click.echo(f"$ {display}")
+        result = subprocess.run(command, cwd=repo_root, check=False)
+        if result.returncode != 0:
+            raise click.ClickException(f"command failed with exit code {result.returncode}: {display}")
+
+    click.echo("Validation passed")
 
 
 @eval.command("parser")
@@ -1413,6 +1532,47 @@ def _coerce_publication_date(value: object) -> date | None:
         return None
 
     return value.date()  # type: ignore[union-attr]
+
+
+def _repo_root() -> Path:
+    """Return the git repository root, falling back to the current directory."""
+    result = subprocess.run(
+        ["git", "rev-parse", "--show-toplevel"],
+        capture_output=True,
+        check=False,
+        text=True,
+    )
+    if result.returncode == 0 and result.stdout.strip():
+        return Path(result.stdout.strip())
+    return Path.cwd()
+
+
+def _git_output(command: list[str], repo_root: Path) -> str:
+    """Run a local git inspection command without raising on failure."""
+    result = subprocess.run(command, cwd=repo_root, capture_output=True, check=False, text=True)
+    if result.returncode != 0:
+        return ""
+    return result.stdout.strip()
+
+
+def _docs_check_failures(repo_root: Path) -> list[str]:
+    """Return stable docs consistency failures for the core workflow docs."""
+    failures: list[str] = []
+
+    for relative_path in CORE_DOC_PATHS:
+        if not (repo_root / relative_path).exists():
+            failures.append(f"missing path: {relative_path}")
+
+    for relative_path, references in DOC_REFERENCE_CHECKS:
+        path = repo_root / relative_path
+        if not path.exists():
+            continue
+        content = path.read_text(encoding="utf-8")
+        for reference in references:
+            if reference not in content:
+                failures.append(f"{relative_path} does not reference {reference}")
+
+    return failures
 
 
 if __name__ == "__main__":

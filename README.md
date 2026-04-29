@@ -46,6 +46,8 @@ The first-wave pipeline is built around PDF-centric authoritative documents. Ope
 This repository includes a lightweight local operating baseline so future Codex
 work can proceed without guessing repo conventions:
 - `AGENTS.md` defines repo-specific agent workflow and integration rules
+- `WORKFLOW.md` defines the Symphony/Codex issue-execution contract for
+  isolated, one-issue-at-a-time autonomous runs
 - `docs/codex-issue-runbook.md` defines the standard one-issue-at-a-time Codex
   execution loop
 - `.codex/` contains repo-local Codex defaults
@@ -72,6 +74,7 @@ Start here when orienting in the repo:
   FlowCommander
 - `AGENTS.md` defines operating rules, safe-edit guidance, and delivery
   expectations
+- `WORKFLOW.md` defines the Symphony/Codex autonomous issue-execution contract
 - `docs/codex-issue-runbook.md` defines the standard issue execution loop for
   Codex work
 - `docs/roadmap.md` defines the phased implementation plan and issue sequence
@@ -123,19 +126,39 @@ needed again. The local Infisical link file is ignored by git.
 ### Current validation commands
 
 ```bash
+knowledge-forge doctor
+kf doctor
+kf docs-check
 ruff check .
 ruff format --check .
 python -m pytest
+kf validate
 python -c "import knowledge_forge"
 python -m knowledge_forge.cli --help
 ```
 
+`kf doctor` is a local readiness report for Python, package import, git state,
+required docs, and expected environment variable presence. It does not print
+secret values and does not make network, OpenAI, or GitHub calls. Missing
+environment variables warn by default; use `kf doctor --strict` when an issue
+needs all expected environment variables present.
+
+`kf docs-check` verifies the core agent and boundary docs exist and keep their
+minimum cross-references. Run it for docs, workflow, publish-boundary, or
+handoff changes.
+
+`kf validate` runs the local validation suite in order: `ruff check .`,
+`ruff format --check .`, `python -m pytest`, and `git diff --check`.
+
 To run these with secrets available:
 
 ```bash
+infisical run -- kf doctor
+infisical run -- kf docs-check
 infisical run -- ruff check .
 infisical run -- ruff format --check .
 infisical run -- python -m pytest
+infisical run -- kf validate
 infisical run -- python -c "import knowledge_forge"
 infisical run -- python -m knowledge_forge.cli --help
 ```

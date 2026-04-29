@@ -1,0 +1,92 @@
+---
+name: knowledge-forge-symphony
+description: Conservative autonomous issue execution contract for Knowledge Forge.
+version: 1
+repository: TNwkrk/knowledge-forge
+default_branch: main
+max_concurrency: 1
+# Symphony currently documents Linear-oriented tracker configuration in the
+# reference implementation. Knowledge Forge issues are GitHub-oriented, so this
+# contract keeps issue language and prompts GitHub-native while avoiding tracker
+# fields that would imply unsupported GitHub-native Symphony behavior.
+tracker:
+  issue_language: github
+workspace:
+  # Prefer an operator-provided isolated workspace root. The fallback stays out
+  # of this checkout and is safe for local dry runs.
+  root: "${SYMPHONY_WORKSPACE_ROOT:-/tmp/knowledge-forge-symphony}"
+  per_issue_subdir: true
+runtime:
+  python: ">=3.11"
+  package: knowledge-forge
+  console_scripts:
+    - knowledge-forge
+    - kf
+hooks:
+  pre_issue:
+    - command: "kf doctor"
+      required: false
+      note: "Run before meaningful work when practical; no network, GitHub, or OpenAI calls."
+  docs_boundary_change:
+    - command: "kf docs-check"
+      required: true
+      note: "Run when docs, workflow, publish-boundary, or handoff behavior changes."
+  pre_pr:
+    - command: "kf validate"
+      required: false
+      note: "Run before PR when practical; reports only commands that actually execute."
+safety:
+  secrets: false
+  network_required: false
+  openai_calls_allowed_by_default: false
+  github_network_calls_allowed_by_default: false
+  direct_flowcommander_edits_allowed: false
+---
+
+# Knowledge Forge Symphony Workflow
+
+Use this workflow for one GitHub issue at a time in `TNwkrk/knowledge-forge`.
+It prepares Codex/Symphony agents to inspect, validate, and hand off focused
+pull requests for human review. It does not implement, vendor, or require
+OpenAI Symphony itself.
+
+## Codex Issue Prompt
+
+You are working on a single GitHub issue in `TNwkrk/knowledge-forge`.
+
+Before meaningful work:
+
+1. Read `AGENTS.md`, `README.md`, and `docs/roadmap.md`.
+2. Read `docs/codex-issue-runbook.md`.
+3. Confirm the issue's roadmap phase and concrete acceptance signal.
+4. Run `kf doctor` when practical and treat missing optional environment
+   variables as warnings unless the issue explicitly requires strict runtime
+   configuration.
+
+Execution rules:
+
+- Work one issue at a time.
+- Stop and report the blocker if the issue lacks acceptance criteria.
+- Stop and report the blocker if the issue requires crossing into a later
+  roadmap phase.
+- Preserve the FlowCommander boundary.
+- Never directly edit FlowCommander as a side effect of Knowledge Forge issue
+  work.
+- Do not implement Symphony, vendor Symphony code, or add hidden automation that
+  bypasses human review.
+- Do not make OpenAI, GitHub, or other network calls unless the issue explicitly
+  requires them and the operator has allowed them.
+- Create a focused branch for the issue.
+- Keep changes scoped to the issue's acceptance signal.
+- Run `kf docs-check` for docs, workflow, publish-boundary, or handoff changes.
+- Run `kf validate` before opening a PR when practical.
+- Open a PR for human review when the work is ready; do not merge it.
+
+Final PR handoff:
+
+- Summarize the issue, branch, changed files, and validation commands with exact
+  results.
+- State whether a separate FlowCommander `repo-wiki` update is likely needed.
+- If a FlowCommander update is likely needed, explain the downstream wiki or
+  publish-boundary impact.
+- Call out remaining risks and any checks that could not be run.
