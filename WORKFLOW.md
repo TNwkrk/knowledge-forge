@@ -5,12 +5,18 @@ version: 1
 repository: TNwkrk/knowledge-forge
 default_branch: main
 max_concurrency: 1
-# Symphony currently documents Linear-oriented tracker configuration in the
-# reference implementation. Knowledge Forge issues are GitHub-oriented, so this
-# contract keeps issue language and prompts GitHub-native while avoiding tracker
-# fields that would imply unsupported GitHub-native Symphony behavior.
 tracker:
-  issue_language: github
+  provider: linear
+  team_key: FC
+  repo_label: repo:knowledge-forge
+  pickable_status: Ready
+  review_status: Human Review
+  rework_status: Rework
+  merging_status: Merging
+  done_status: Done
+  symphony_ready_label: symphony-ready
+  auto_merge: false
+  require_human_review: true
 workspace:
   # Prefer an operator-provided isolated workspace root. The fallback stays out
   # of this checkout and is safe for local dry runs.
@@ -45,35 +51,44 @@ safety:
 
 # Knowledge Forge Symphony Workflow
 
-Use this workflow for one GitHub issue at a time in `TNwkrk/knowledge-forge`.
+Use this workflow for one Linear issue at a time in `TNwkrk/knowledge-forge`.
 It prepares Codex/Symphony agents to inspect, validate, and hand off focused
 pull requests for human review. It does not implement, vendor, or require
-OpenAI Symphony itself.
+OpenAI Symphony itself. Linear is the planning and execution control plane;
+GitHub remains code hosting, pull requests, CI, Dependabot, and security.
 
 ## Codex Issue Prompt
 
-You are working on a single GitHub issue in `TNwkrk/knowledge-forge`.
+You are working on a single Linear issue in `TNwkrk/knowledge-forge`.
 
 Before meaningful work:
 
 1. Read `AGENTS.md`, `README.md`, and `docs/roadmap.md`.
 2. Read `docs/codex-issue-runbook.md`.
-3. Confirm the issue's roadmap phase and concrete acceptance signal.
-4. Run `kf doctor` when practical and treat missing optional environment
+3. Confirm the issue is in the FlowCommander team (`FC`) with status `Ready`.
+4. Confirm the `symphony-ready` label is present.
+5. Confirm exactly one repo label is present and that it is `repo:knowledge-forge`.
+6. Do not pick issues labeled `human-only`, `symphony-blocked`, `needs-spec`, or `blocked`.
+7. Do not pick issues with open blockers.
+8. Confirm the issue's roadmap phase and concrete acceptance signal.
+9. Run `kf doctor` when practical and treat missing optional environment
    variables as warnings unless the issue explicitly requires strict runtime
    configuration.
 
 Execution rules:
 
 - Work one issue at a time.
+- Verify Symphony eligibility before work.
 - Stop and report the blocker if the issue lacks acceptance criteria.
 - Stop and report the blocker if the issue requires crossing into a later
   roadmap phase.
 - Preserve the FlowCommander boundary.
 - Never directly edit FlowCommander as a side effect of Knowledge Forge issue
   work.
+- Include the Linear issue URL in the PR body.
 - Do not implement Symphony, vendor Symphony code, or add hidden automation that
   bypasses human review.
+- Do not enable auto-merge.
 - Do not make OpenAI, GitHub, or other network calls unless the issue explicitly
   requires them and the operator has allowed them.
 - Create a focused branch for the issue.
@@ -84,8 +99,8 @@ Execution rules:
 
 Final PR handoff:
 
-- Summarize the issue, branch, changed files, and validation commands with exact
-  results.
+- Include the Linear issue URL, summary, branch, changed files, and validation
+  commands with exact results.
 - State whether a separate FlowCommander `repo-wiki` update is likely needed.
 - If a FlowCommander update is likely needed, explain the downstream wiki or
   publish-boundary impact.

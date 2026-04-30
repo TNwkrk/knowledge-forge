@@ -42,7 +42,10 @@ generate scoped pages until the FlowCommander-side contract is extended.
 
 ## Phased implementation plan
 
-Each phase maps to one or more GitHub epics. Issues within each phase are sequenced so they can be worked one at a time without guessing context.
+Each phase maps to one or more execution workstreams. Linear mirrors the active
+execution queue for Symphony/Codex work, while this roadmap remains the
+phase/architecture source. Do not treat Linear status alone as permission to
+cross phase boundaries.
 
 Each issue should also carry a concrete acceptance signal before implementation
 starts. Prefer one or more of:

@@ -82,6 +82,9 @@ Primary priorities:
 - Before meaningful work, read `AGENTS.md`, `README.md`, and `docs/roadmap.md` first.
 - For Symphony-style autonomous issue execution, also read `WORKFLOW.md` before
   starting the issue loop.
+- Treat Linear as the planning control plane for Symphony/Codex issue execution.
+- Treat GitHub as the code host, pull request surface, CI runner, Dependabot
+  surface, and security alert surface.
 - For publish-boundary or downstream handoff work, also read `docs/publish-contract.md` and `docs/agent-workflow.md` before editing.
 - Keep scope honest to the current roadmap phase. Do not describe unfinished pipeline stages as if they already exist.
 - Use local FlowCommander inspection for comparison and publish preparation, not as permission for direct downstream mutation.
@@ -153,6 +156,10 @@ Primary priorities:
 ## Build and Test
 - Before changing code, inspect the repo and document the real install, lint,
   test, and validation commands that exist.
+- Start Symphony/Codex work from the assigned Linear issue and verify the
+  `Ready` status, `symphony-ready` label, exactly one repo label, no
+  disqualifying labels, no open blockers, and concrete/testable acceptance
+  criteria.
 - Run `kf doctor` before non-trivial work when practical to capture local
   Python, git, required-doc, and environment readiness without printing secrets.
 - Run `kf docs-check` for docs, workflow, publish-boundary, or handoff changes.
@@ -162,6 +169,8 @@ Primary priorities:
   workflow.
 - For this repo's current bootstrap state, docs and scaffolding consistency are
   meaningful validation steps.
+- FlowCommander remains the downstream consumer and PR publication target for
+  approved knowledge outputs.
 
 ## Expected Delivery Pattern
 For non-trivial work:
