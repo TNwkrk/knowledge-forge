@@ -333,19 +333,30 @@ def test_extract_document_loads_sections_and_marks_manifest_extracted(tmp_path: 
 
 
 @pytest.mark.parametrize(
-    ("title", "reason_code"),
+    ("title", "content", "reason_code"),
     [
-        ("continued", "generic_carryover_title"),
-        ("D", "single_letter_title"),
-        ("2.", "numeric_fragment_title"),
+        ("continued", "Placeholder content", "generic_carryover_title"),
+        ("D", "Placeholder content", "single_letter_title"),
+        ("2.", "Placeholder content", "numeric_fragment_title"),
+        ("software", "Placeholder content", "vague_title"),
         (
             "B-1 local I/O backplane memory use 3-4 CompactBus 3-5 configuring 3-7 generic profile 3-17 overview 3-1",
+            "Placeholder content",
             "toc_fragment_title",
+        ),
+        (
+            "Technical Data",
+            (
+                "Contents\nConfiguration ........ 3\nStartup ........ 8\nMaintenance ........ 12\n"
+                "Troubleshooting ........ 16"
+            ),
+            "toc_fragment_content",
         ),
     ],
 )
 def test_assess_section_reviewability_flags_rockwell_like_malformed_titles(
     title: str,
+    content: str,
     reason_code: str,
 ) -> None:
     assessment = assess_section_reviewability(
@@ -354,7 +365,7 @@ def test_assess_section_reviewability_flags_rockwell_like_malformed_titles(
             section_id="rockwell-doc--section--001",
             section_type="other",
             title=title,
-            content="Placeholder content",
+            content=content,
             page_range=(1, 1),
             heading_path=[title],
         )
@@ -393,6 +404,59 @@ def test_extract_section_skips_non_reviewable_titles_before_inference(tmp_path: 
     payload = json.loads(troubleshooting_flag.read_text(encoding="utf-8"))
     assert payload["reasons"] == ["section_not_reviewable", "generic_carryover_title"]
     assert "generic carryover heading" in payload["errors"][0]
+
+
+def test_extract_section_filters_low_signal_spec_fragments_before_promotion(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    doc_id = _register_parsed_fixture(_write_pdf(tmp_path / "manual.pdf"), data_dir)
+    _write_parse_meta(data_dir, doc_id)
+    _write_bucket_assignments(data_dir, doc_id)
+    section = Section(
+        doc_id=doc_id,
+        section_id=f"{doc_id}--technical-data--001",
+        section_type="specifications",
+        title="Technical Data",
+        content="Control voltage: 24 VDC\nXML encoding: UTF-8\nDimension A: 32 mm",
+        page_range=(12, 13),
+        heading_path=["Technical Data"],
+    )
+    client = _FakeClient(
+        {
+            "spec_value": [
+                {
+                    **_base_record(),
+                    "parameter": "Control voltage",
+                    "value": "24",
+                    "unit": "VDC",
+                    "conditions": None,
+                    "applicability": None,
+                },
+                {
+                    **_base_record(),
+                    "parameter": "XML encoding",
+                    "value": "UTF-8",
+                    "unit": None,
+                    "conditions": None,
+                    "applicability": None,
+                },
+                {
+                    **_base_record(),
+                    "parameter": "A",
+                    "value": "32",
+                    "unit": "mm",
+                    "conditions": None,
+                    "applicability": None,
+                },
+            ]
+        }
+    )
+
+    records = extract_section(section, client=client, data_dir=data_dir)
+
+    assert [record.parameter for record in records] == ["Control voltage"]
+    extracted_dir = data_dir / "extracted" / doc_id / "spec_value"
+    written = sorted(path.name for path in extracted_dir.glob("*.json"))
+    assert written == [f"{section.section_id}--spec_value--001.json"]
 
 
 def test_section_type_mapping_covers_all_canonical_section_types() -> None:
