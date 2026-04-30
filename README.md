@@ -77,6 +77,8 @@ Start here when orienting in the repo:
 - `WORKFLOW.md` defines the Symphony/Codex autonomous issue-execution contract
 - `docs/codex-issue-runbook.md` defines the standard issue execution loop for
   Codex work
+- `docs/linear-tracker.md` defines the Linear-first tracker model and PR
+  handoff expectations
 - `docs/roadmap.md` defines the phased implementation plan and issue sequence
 - `docs/publish-contract.md` defines the FlowCommander publish boundary
 - `docs/repo-structure.md` defines the intended repository layout and artifact
