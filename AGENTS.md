@@ -3,16 +3,25 @@
 ## Project
 Knowledge Forge is a separate repository in the broader FlowCommander project.
 
-Its job is to turn manuals and other technical source material into reviewable,
-human-readable knowledge artifacts that can later be proposed to FlowCommander
-through a pull request workflow.
+Its job is to turn *promoted candidate source packs* — manuals, bulletins,
+SOPs, checklists, inspection and service forms, drawings, and other
+field-service source material — into reviewable, human-readable knowledge
+artifacts that can be proposed back to FlowCommander through a pull request
+workflow. Knowledge Forge is the refinement engine; FlowCommander is the
+operational intake surface and the downstream consumer of approved knowledge.
 
 Core responsibilities:
-- intake and manifesting
-- pre-bucketing and parsing preparation
+- intake and manifesting of candidate source packs (curated during bootstrap, promoted from FlowCommander in steady state)
+- pre-bucketing and parsing preparation across the full source taxonomy (not manuals only)
 - structured extraction and wiki compilation
-- provenance-preserving staging for publish
+- contradiction and supersession analysis
+- guardrails that reject or downgrade low-signal operational material so it does not become published knowledge, with rejections visible back to the FlowCommander promoter
+- provenance-preserving staging for publish, including back-references to originating FlowCommander artifact IDs where applicable
 - PR-based publication into FlowCommander `repo-wiki/knowledge/`
+
+Out of scope:
+- reading FlowCommander's operational tables directly
+- publishing customer/site/station-scoped knowledge until the publish contract is explicitly extended for scoped targets
 
 Primary priorities:
 - trustworthy generated artifacts
@@ -60,6 +69,8 @@ Primary priorities:
 ## Canonical References
 - `README.md` explains the repo's purpose, scope, and FlowCommander boundary.
 - `AGENTS.md` is the top-level operating rules document for agents.
+- `WORKFLOW.md` is the Symphony/Codex issue-execution contract for isolated,
+  one-issue-at-a-time autonomous runs.
 - `docs/codex-issue-runbook.md` is the standard issue-worker runbook.
 - `docs/roadmap.md` is the source of truth for phased issue sequencing.
 - `docs/publish-contract.md` defines the downstream publish contract.
@@ -69,6 +80,11 @@ Primary priorities:
 
 ## Start Here
 - Before meaningful work, read `AGENTS.md`, `README.md`, and `docs/roadmap.md` first.
+- For Symphony-style autonomous issue execution, also read `WORKFLOW.md` before
+  starting the issue loop.
+- Treat Linear as the planning control plane for Symphony/Codex issue execution.
+- Treat GitHub as the code host, pull request surface, CI runner, Dependabot
+  surface, and security alert surface.
 - For publish-boundary or downstream handoff work, also read `docs/publish-contract.md` and `docs/agent-workflow.md` before editing.
 - Keep scope honest to the current roadmap phase. Do not describe unfinished pipeline stages as if they already exist.
 - Use local FlowCommander inspection for comparison and publish preparation, not as permission for direct downstream mutation.
@@ -140,10 +156,21 @@ Primary priorities:
 ## Build and Test
 - Before changing code, inspect the repo and document the real install, lint,
   test, and validation commands that exist.
+- Start Symphony/Codex work from the assigned Linear issue and verify the
+  `Ready` status, `symphony-ready` label, exactly one repo label, no
+  disqualifying labels, no open blockers, and concrete/testable acceptance
+  criteria.
+- Run `kf doctor` before non-trivial work when practical to capture local
+  Python, git, required-doc, and environment readiness without printing secrets.
+- Run `kf docs-check` for docs, workflow, publish-boundary, or handoff changes.
+- Run `kf validate` before opening a PR when practical; it runs the local ruff,
+  pytest, and whitespace checks and reports only commands that actually ran.
 - If commands do not exist yet, report that clearly rather than inventing a fake
   workflow.
 - For this repo's current bootstrap state, docs and scaffolding consistency are
   meaningful validation steps.
+- FlowCommander remains the downstream consumer and PR publication target for
+  approved knowledge outputs.
 
 ## Expected Delivery Pattern
 For non-trivial work:

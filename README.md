@@ -3,15 +3,17 @@
 Knowledge Forge is a local-first or self-hosted technical document digestion system for turning field-service source materials into trustworthy, reviewable knowledge artifacts.
 
 Its job is to:
-- register and classify technical source documents
+- accept *promoted candidate source packs* from FlowCommander (and curated source packs during bootstrap) covering authoritative technical documents, operational documents, and future source families
+- register and classify those source documents
 - pre-bucket them before heavy processing
 - normalize and parse technical documents (PDF, DOCX, XLSX, HTML, images, and other supported formats)
 - use the OpenAI API to extract canonical knowledge records
 - use the OpenAI API to compile human-readable wiki pages
 - detect contradiction and supersession candidates
+- apply guardrails so low-signal operational material does not become published knowledge
 - publish approved wiki output into the FlowCommander `repo-wiki` by pull request
 
-Knowledge Forge is a separate system from FlowCommander. Hosted Supabase may store approved outputs later for retrieval, but it is **not** responsible for the digestion pipeline.
+Knowledge Forge is a separate system from FlowCommander. FlowCommander owns operational intake (field photos, emailed attachments, startup sheets, winterization docs, inspection forms, job PDFs, drawings, controller screenshots, service correspondence, notes) and the editorial *promotion* action that turns selected operational material into a Knowledge Forge candidate source pack. Knowledge Forge does not read FlowCommander's operational tables on its own. Hosted Supabase may store approved outputs later for retrieval, but it is **not** responsible for the digestion pipeline. See the FlowCommander-side canonical model in [`FlowCommander/docs/operational-intake-model.md`](https://github.com/TNwkrk/FlowCommander/blob/main/docs/operational-intake-model.md).
 
 ## Source material scope
 
@@ -44,6 +46,8 @@ The first-wave pipeline is built around PDF-centric authoritative documents. Ope
 This repository includes a lightweight local operating baseline so future Codex
 work can proceed without guessing repo conventions:
 - `AGENTS.md` defines repo-specific agent workflow and integration rules
+- `WORKFLOW.md` defines the Symphony/Codex issue-execution contract for
+  isolated, one-issue-at-a-time autonomous runs
 - `docs/codex-issue-runbook.md` defines the standard one-issue-at-a-time Codex
   execution loop
 - `.codex/` contains repo-local Codex defaults
@@ -70,8 +74,11 @@ Start here when orienting in the repo:
   FlowCommander
 - `AGENTS.md` defines operating rules, safe-edit guidance, and delivery
   expectations
+- `WORKFLOW.md` defines the Symphony/Codex autonomous issue-execution contract
 - `docs/codex-issue-runbook.md` defines the standard issue execution loop for
   Codex work
+- `docs/linear-tracker.md` defines the Linear-first tracker model and PR
+  handoff expectations
 - `docs/roadmap.md` defines the phased implementation plan and issue sequence
 - `docs/publish-contract.md` defines the FlowCommander publish boundary
 - `docs/repo-structure.md` defines the intended repository layout and artifact
@@ -121,19 +128,39 @@ needed again. The local Infisical link file is ignored by git.
 ### Current validation commands
 
 ```bash
+knowledge-forge doctor
+kf doctor
+kf docs-check
 ruff check .
 ruff format --check .
 python -m pytest
+kf validate
 python -c "import knowledge_forge"
 python -m knowledge_forge.cli --help
 ```
 
+`kf doctor` is a local readiness report for Python, package import, git state,
+required docs, and expected environment variable presence. It does not print
+secret values and does not make network, OpenAI, or GitHub calls. Missing
+environment variables warn by default; use `kf doctor --strict` when an issue
+needs all expected environment variables present.
+
+`kf docs-check` verifies the core agent and boundary docs exist and keep their
+minimum cross-references. Run it for docs, workflow, publish-boundary, or
+handoff changes.
+
+`kf validate` runs the local validation suite in order: `ruff check .`,
+`ruff format --check .`, `python -m pytest`, and `git diff --check`.
+
 To run these with secrets available:
 
 ```bash
+infisical run -- kf doctor
+infisical run -- kf docs-check
 infisical run -- ruff check .
 infisical run -- ruff format --check .
 infisical run -- python -m pytest
+infisical run -- kf validate
 infisical run -- python -c "import knowledge_forge"
 infisical run -- python -m knowledge_forge.cli --help
 ```
@@ -229,12 +256,14 @@ hint used only for bucket assignment and cross-source compilation.
 ## Goals
 
 ### Primary goals
-- build a reliable backlog-digestion pipeline for manuals
-- pre-bucket manuals before LLM processing
+- build a reliable digestion pipeline for the full field-service source corpus — authoritative technical documents first, operational documents progressively, and future source families over time
+- pre-bucket source documents (manuals, bulletins, SOPs, checklists, forms, drawings, and other classes) before LLM processing
+- accept *promoted candidate source packs* pushed from FlowCommander as a first-class intake path, alongside curated source packs during bootstrap
 - use the OpenAI API for schema-bound extraction and wiki compilation
 - produce a human-readable compiled wiki
+- apply guardrails so low-signal operational material (e.g. ambiguous correspondence, unlabeled field photos) does not become published knowledge, and surface rejections back to the FlowCommander promoter
 - publish approved wiki artifacts into FlowCommander by PR
-- preserve provenance and rerun safety
+- preserve provenance and rerun safety, including back-references to originating FlowCommander artifact IDs where applicable
 - leave room for future Ask AI integration
 
 ### Non-goals for v1

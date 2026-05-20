@@ -2,10 +2,10 @@
 
 ## System overview
 
-Knowledge Forge is a local-first pipeline that converts technical manuals into structured, reviewable knowledge artifacts. It is a separate system from FlowCommander.
+Knowledge Forge is a local-first pipeline that converts *promoted candidate source packs* — technical manuals, SOPs, checklists, inspection and service forms, drawings, and other field-service source material — into structured, reviewable knowledge artifacts. It is a separate system from FlowCommander. FlowCommander owns operational intake and editorial promotion; Knowledge Forge is the refinement engine. See [`FlowCommander/docs/operational-intake-model.md`](https://github.com/TNwkrk/FlowCommander/blob/main/docs/operational-intake-model.md) for the upstream contract.
 
 ```
-manual intake → pre-bucket → OCR/parse → LLM structured extraction → LLM wiki compilation → review → publish PR
+(curated pack | FC-promoted pack) → intake → pre-bucket → OCR/parse → LLM structured extraction → LLM wiki compilation → guardrails → review → publish PR
 ```
 
 Every stage produces durable artifacts on disk. No stage depends on hosted services for its core processing loop.
@@ -15,7 +15,7 @@ Every stage produces durable artifacts on disk. No stage depends on hosted servi
 1. **Filesystem-first.** All pipeline artifacts live on disk in well-known paths. A database may index them later, but the files are the source of truth.
 2. **Provenance everywhere.** Every extracted record traces back to a source document, page range, heading, parser version, extraction version, and confidence score.
 3. **Rerun safety.** Any stage can be re-executed without corrupting previously approved outputs. Idempotent writes keyed on content hashes.
-4. **Pre-bucket before heavy processing.** Manuals are classified and grouped before any LLM inference runs. This bounds cost and scopes contradiction analysis.
+4. **Pre-bucket before heavy processing.** Source documents are classified and grouped before any LLM inference runs. This bounds cost and scopes contradiction analysis.
 5. **LLM inference is a first-class subsystem.** The OpenAI integration is not bolted on—it has its own client layer, logging, cost tracking, batch support, and retry logic.
 6. **PR-based publish.** Nothing writes directly into FlowCommander. All output goes through a staged publish step that opens a pull request for human review.
 7. **Embeddings are not the knowledge layer.** Structured extraction and compiled wiki pages are the primary outputs. Embeddings may be generated downstream but are not the source of truth.
@@ -24,7 +24,7 @@ Every stage produces durable artifacts on disk. No stage depends on hosted servi
 
 ### Stage 0 — Intake and manifest
 
-Every manual entering the system gets a manifest record:
+Every source document entering the system (whether from a curated source pack or an FC-promoted candidate pack) gets a manifest record:
 
 | Field | Purpose |
 |---|---|

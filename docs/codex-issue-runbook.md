@@ -1,10 +1,12 @@
 # Knowledge Forge — Codex Issue Runbook
 
-Use this runbook when Codex works a single roadmap issue in Knowledge Forge.
+Use this runbook when Codex works a single Linear issue in Knowledge Forge.
 
 ## Working rules
 
 - Work one issue at a time.
+- Start from the assigned Linear issue.
+- Verify Symphony eligibility before work.
 - Start from the current default branch, then create a focused feature branch.
 - Keep the diff scoped to the issue's acceptance signal.
 - Do not widen scope into later roadmap phases just because the structure is
@@ -14,22 +16,32 @@ Use this runbook when Codex works a single roadmap issue in Knowledge Forge.
 
 ## Standard issue loop
 
-1. Read the issue, `AGENTS.md`, `README.md`, and the relevant docs named there.
-2. Confirm the current roadmap phase and stay inside that phase boundary.
-3. Inspect the existing repo structure and the real validation commands already
+1. Read the Linear issue, `AGENTS.md`, `README.md`, and the relevant docs named there.
+2. Confirm the issue is in team `FC`, status `Ready`, label `symphony-ready` is
+   present, exactly one repo label is present, no disqualifying labels are
+   present, there are no open blockers, and acceptance criteria are concrete and
+   testable.
+3. Confirm the current roadmap phase and stay inside that phase boundary.
+4. Run `kf doctor` before non-trivial work when practical to record local
+   Python, git, required-doc, and environment readiness without printing
+   secrets.
+5. Inspect the existing repo structure and the real validation commands already
    available.
-4. Make the smallest complete change set that satisfies the issue.
-5. Update docs when behavior, structure, boundaries, or acceptance criteria
+6. Make the smallest complete change set that satisfies the issue.
+7. Update docs when behavior, structure, boundaries, or acceptance criteria
    changed.
-6. Run the relevant validation and report exactly what was run.
-7. In the final report, include the `AGENTS.md` FlowCommander repo-wiki `yes` /
+8. Run the relevant validation and report exactly what was run.
+9. In the final report, include the `AGENTS.md` FlowCommander repo-wiki `yes` /
    `no` determination.
-8. Open a PR against the default branch with scope, validation, and out-of-scope
-   notes.
+10. Open a PR against the default branch with the Linear issue URL, scope,
+    validation, and out-of-scope notes.
 
 ## Validation expectations
 
 - Run the issue's acceptance checks when they exist.
+- Run `kf docs-check` for docs, workflow, publish-boundary, or handoff changes.
+- Run `kf validate` before PR when practical; it runs `ruff check .`,
+  `ruff format --check .`, `python -m pytest`, and `git diff --check`.
 - Always run `git diff --check` before wrapping up.
 - If only docs or scaffolding changed, docs consistency and smoke checks are
   valid, but say that plainly.
@@ -46,6 +58,7 @@ Use this runbook when Codex works a single roadmap issue in Knowledge Forge.
 
 - Branch names should be clear and issue-scoped.
 - PR bodies should include the summary, files changed, commands run,
-  intentionally out-of-scope items, and how the change improves future work.
+  intentionally out-of-scope items, the Linear issue URL, and how the change
+  improves future work.
 - Leave merge decisions to the repo's normal review flow unless explicitly told
   otherwise.
