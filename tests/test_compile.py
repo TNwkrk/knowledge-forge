@@ -527,9 +527,9 @@ def test_compile_topic_page_renders_citations_applicability_notes_and_conflicts(
     assert "models: DC1000, DC1200" in rendered_startup
     assert "## Potential Contradictions" in rendered_startup
     assert "> [!WARNING] Contradiction" in rendered_startup
-    assert "(Service Manual, p.18, revised manual, level 2)" in rendered_startup
-    assert "(SOP, p.21, internal SOP or best practice, level 5)" in rendered_startup
-    assert "Recommended resolution: Prefer `honeywell-dc1000-service-manual-rev-3`" in rendered_startup
+    assert 'section "Startup Procedure", p.18, revised manual, level 2' in rendered_startup
+    assert 'section "Startup Procedure", p.21, internal SOP or best practice, level 5' in rendered_startup
+    assert "Recommended resolution: Retain `honeywell-dc1000-service-manual-rev-3`" in rendered_startup
     assert client.calls[0]["prompt_template"] == "compilation/topic_page"
 
     specs_page = compile_topic_page(
@@ -683,6 +683,207 @@ def test_compile_topic_page_filters_low_signal_other_sections(tmp_path: Path) ->
     assert "Ignored low-confidence row: 12 PSI" not in rendered
 
 
+def test_compile_topic_page_filters_ui_admin_shutdown_procedures(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    power_doc_id = _register_extracted_fixture(_write_pdf(tmp_path / "power.pdf"), data_dir)
+    hmi_doc_id = _register_extracted_fixture(
+        _write_pdf(tmp_path / "hmi.pdf"),
+        data_dir,
+        document_type="Operation Manual",
+    )
+    shutdown_section = f"{power_doc_id}--shutdown--001"
+    hmi_section = f"{hmi_doc_id}--shutdown--001"
+
+    _write_section(
+        data_dir,
+        power_doc_id,
+        section_id=shutdown_section,
+        title="Shut-down Input",
+        section_type="shutdown",
+        page_range=(8, 8),
+    )
+    _write_section(
+        data_dir,
+        hmi_doc_id,
+        section_id=hmi_section,
+        title="Shutdown buttons",
+        section_type="shutdown",
+        page_range=(182, 182),
+    )
+    _write_record(
+        data_dir,
+        power_doc_id,
+        "procedure",
+        f"{shutdown_section}--procedure--001",
+        {
+            **_base_record(power_doc_id, heading="Shut-down Input", start_page=8, end_page=8, confidence=0.96),
+            "extraction_version": "extraction/procedure@v1:gpt-4o-mini",
+            "title": "Shut-down Input Procedure",
+            "steps": [
+                {
+                    **_base_record(power_doc_id, heading="Shut-down Input", start_page=8, end_page=8, confidence=0.96),
+                    "step_number": 1,
+                    "instruction": "Connect the signal switch or external voltage to shut down the power supply.",
+                    "note": None,
+                    "caution": None,
+                    "figure_ref": None,
+                }
+            ],
+            "applicability": None,
+            "warnings": [],
+            "tools_required": [],
+        },
+    )
+    _write_record(
+        data_dir,
+        hmi_doc_id,
+        "procedure",
+        f"{hmi_section}--procedure--001",
+        {
+            **_base_record(hmi_doc_id, heading="Shutdown buttons", start_page=182, end_page=182, confidence=0.98),
+            "extraction_version": "extraction/procedure@v1:gpt-4o-mini",
+            "title": "Use Security Codes to Control Shutdown Button Visibility",
+            "steps": [
+                {
+                    **_base_record(
+                        hmi_doc_id,
+                        heading="Shutdown buttons",
+                        start_page=182,
+                        end_page=182,
+                        confidence=0.98,
+                    ),
+                    "step_number": 1,
+                    "instruction": (
+                        "Assign security codes so only authorized users can see the shutdown "
+                        "button in the runtime display."
+                    ),
+                    "note": None,
+                    "caution": None,
+                    "figure_ref": None,
+                }
+            ],
+            "applicability": None,
+            "warnings": [],
+            "tools_required": [],
+        },
+    )
+
+    page = compile_topic_page(
+        "honeywell/dc1000/family",
+        "shutdown_procedure",
+        client=_FakeCompileClient(""),
+        data_dir=data_dir,
+    )
+    rendered = page.render()
+
+    assert "Connect the signal switch or external voltage to shut down the power supply." in rendered
+    assert "shutdown button" not in rendered
+    assert "runtime display" not in rendered
+
+
+def test_compile_bucket_topic_pages_skips_mixed_family_specifications_without_coherent_scope(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    compact_doc_id = _register_extracted_fixture(_write_pdf(tmp_path / "compact.pdf"), data_dir)
+    control_doc_id = _register_extracted_fixture(_write_pdf(tmp_path / "control.pdf"), data_dir, revision="Rev 4")
+
+    control_manifest = load_manifest(data_dir, control_doc_id)
+    control_path = data_dir / "manifests" / f"{control_doc_id}.yaml"
+    control_path.write_text(
+        control_manifest.model_copy(
+            update={
+                "document": control_manifest.document.model_copy(
+                    update={"family": "ControlLogix", "model_applicability": ["1756-L81E"]}
+                )
+            }
+        ).to_yaml(),
+        encoding="utf-8",
+    )
+    compact_manifest = load_manifest(data_dir, compact_doc_id)
+    compact_path = data_dir / "manifests" / f"{compact_doc_id}.yaml"
+    compact_path.write_text(
+        compact_manifest.model_copy(
+            update={
+                "document": compact_manifest.document.model_copy(
+                    update={"family": "CompactLogix", "model_applicability": ["1769-L30ER"]}
+                )
+            }
+        ).to_yaml(),
+        encoding="utf-8",
+    )
+
+    compact_section = f"{compact_doc_id}--technical-data--001"
+    control_section = f"{control_doc_id}--technical-data--001"
+    _write_section(
+        data_dir,
+        compact_doc_id,
+        section_id=compact_section,
+        title="Technical Data",
+        section_type="specifications",
+        page_range=(10, 10),
+    )
+    _write_section(
+        data_dir,
+        control_doc_id,
+        section_id=control_section,
+        title="Technical Data",
+        section_type="specifications",
+        page_range=(20, 20),
+    )
+    _write_record(
+        data_dir,
+        compact_doc_id,
+        "spec_value",
+        f"{compact_section}--spec_value--001",
+        {
+            **_base_record(compact_doc_id, heading="Technical Data", start_page=10, end_page=10, confidence=0.96),
+            "extraction_version": "extraction/spec_value@v1:gpt-4o-mini",
+            "parameter": "Supply voltage",
+            "value": "24",
+            "unit": "VDC",
+            "conditions": None,
+            "applicability": {
+                **_base_record(compact_doc_id, heading="Technical Data", start_page=10, end_page=10, confidence=0.96),
+                "manufacturer": "Honeywell",
+                "family": "CompactLogix",
+                "models": ["1769-L30ER"],
+                "serial_range": None,
+                "revision": "Rev 3",
+            },
+        },
+    )
+    _write_record(
+        data_dir,
+        control_doc_id,
+        "spec_value",
+        f"{control_section}--spec_value--001",
+        {
+            **_base_record(control_doc_id, heading="Technical Data", start_page=20, end_page=20, confidence=0.95),
+            "extraction_version": "extraction/spec_value@v1:gpt-4o-mini",
+            "parameter": "Backplane current",
+            "value": "5",
+            "unit": "A",
+            "conditions": None,
+            "applicability": {
+                **_base_record(control_doc_id, heading="Technical Data", start_page=20, end_page=20, confidence=0.95),
+                "manufacturer": "Honeywell",
+                "family": "ControlLogix",
+                "models": ["1756-L81E"],
+                "serial_range": None,
+                "revision": "Rev 3",
+            },
+        },
+    )
+
+    pages = compile_bucket_topic_pages(
+        "honeywell/dc1000/family",
+        client=_FakeCompileClient(""),
+        data_dir=data_dir,
+    )
+
+    topics = {page.frontmatter["topic"] for page in pages if "topic" in page.frontmatter}
+    assert "specifications" not in topics
+
+
 def test_render_contradiction_notes_generates_bucket_summary_page_and_cli(tmp_path: Path) -> None:
     data_dir = tmp_path / "data"
     service_doc_id = _register_extracted_fixture(
@@ -787,10 +988,14 @@ def test_render_contradiction_notes_generates_bucket_summary_page_and_cli(tmp_pa
 
     assert page.output_path == data_dir / "compiled" / "contradiction-notes" / "honeywell-dc1000-family.md"
     assert "title: 'Contradiction Notes: honeywell/dc1000/family'" in rendered
-    assert "## Candidate 1: Start the controller step 1" in rendered
-    assert "(Service Manual, p.18, revised manual, level 2)" in rendered
-    assert "(SOP, p.21, internal SOP or best practice, level 5)" in rendered
-    assert "Recommended resolution: Prefer `honeywell-dc1000-service-manual-rev-3`" in rendered
+    assert "## Summary" in rendered
+    assert "## Field Guidance" in rendered
+    assert "### Candidate 1: Start the controller step 1" in rendered
+    assert 'section "Startup Procedure", p.18, revised manual, level 2' in rendered
+    assert 'section "Startup Procedure", p.21, internal SOP or best practice, level 5' in rendered
+    assert "Retained guidance: Prefer `honeywell-dc1000-service-manual-rev-3`" in rendered
+    assert "Human review still needed:" in rendered
+    assert 'locator: section "Startup Procedure" (p.18)' in rendered
     assert "analysis_version: contradiction-analysis@v1" in rendered
     assert "contradiction-analysis@v1" in rendered  # always in extraction_version
 

@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import math
+import re
 from collections import Counter
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -73,6 +75,82 @@ TOPIC_RECORD_TYPE_MAP: dict[str, set[str]] = {
     "troubleshooting": {"troubleshooting_entry"},
 }
 OTHER_SECTION_MIN_CONFIDENCE = 0.8
+TOPIC_SCOPE_DOMINANCE_THRESHOLD = 0.6
+UI_ADMIN_EXCLUSION_TERMS = {
+    "application",
+    "backup",
+    "browser",
+    "button",
+    "certificate",
+    "display",
+    "editor",
+    "export",
+    "graphic",
+    "import",
+    "macro",
+    "menu",
+    "runtime",
+    "screen",
+    "security",
+    "title bar",
+    "user",
+    "visibility",
+    "window",
+    "xml",
+}
+FIELD_EQUIPMENT_TERMS = {
+    "breaker",
+    "cabinet",
+    "contact",
+    "controller",
+    "current",
+    "discharge",
+    "energize",
+    "equipment",
+    "input",
+    "motor",
+    "output",
+    "panel",
+    "power",
+    "pump",
+    "relay",
+    "signal switch",
+    "supply",
+    "terminal",
+    "unit",
+    "valve",
+    "voltage",
+    "wire",
+}
+TOPIC_DOMAIN_TERMS: dict[str, set[str]] = {
+    "startup_procedure": {"energize", "power up", "power on", "start", "startup"},
+    "shutdown_procedure": {"de-energize", "power down", "power off", "shut down", "shutdown", "stop"},
+    "maintenance_procedure": {"clean", "inspect", "lubricate", "maint", "maintenance", "pm", "replace", "service"},
+}
+LOW_SIGNAL_SPEC_TERMS = {
+    "application",
+    "backup",
+    "certificate",
+    "compliance",
+    "csv",
+    "encoding",
+    "export",
+    "file",
+    "graphic",
+    "import",
+    "menu",
+    "regulatory",
+    "rohs",
+    "runtime",
+    "security",
+    "software",
+    "unicode",
+    "utf-8",
+    "visibility",
+    "weee",
+    "xml",
+}
+LOW_SIGNAL_SPEC_PARAMETERS = {"a", "b", "c", "d", "e", "f", "g", "h", "l", "w", "x", "y", "z"}
 
 
 @dataclass(frozen=True)
@@ -119,6 +197,7 @@ def compile_topic_page(
     topic_records = (
         records if records is not None else _load_topic_records(bucket_id, topic, data_dir=resolved_data_dir)
     )
+    topic_records = _filter_topic_records(bucket_id, topic, topic_records)
     if not topic_records:
         raise FileNotFoundError(f"no extracted records found for bucket '{bucket_id}' and topic '{topic}'")
 
@@ -192,7 +271,11 @@ def compile_bucket_topic_pages(
     bucket_contradiction_entries = build_note_entries(bucket_id, data_dir=resolved_data_dir)
     pages: list[CompiledPage] = []
     for topic in TOPIC_TITLES:
-        records_for_topic = [entry for entry in topic_records if classify_topic(entry) == topic]
+        records_for_topic = _filter_topic_records(
+            bucket_id,
+            topic,
+            [entry for entry in topic_records if classify_topic(entry) == topic],
+        )
         if not records_for_topic:
             continue
         pages.append(
@@ -285,6 +368,8 @@ def classify_topic(entry: TopicRecord) -> str | None:
             assessment = assess_section_reviewability(entry.section)
             if not assessment.reviewable or entry.record.confidence < OTHER_SECTION_MIN_CONFIDENCE:
                 continue
+        if not _record_is_admissible_for_topic(entry, topic):
+            continue
         return topic
     return None
 
@@ -429,9 +514,15 @@ def _render_applicability_notes(records: list[TopicRecord]) -> list[str]:
 
 
 def _build_title(records: list[TopicRecord], topic: str) -> str:
-    manifest = sorted(records, key=lambda entry: entry.doc_id)[0].manifest
-    document = manifest.document
-    return f"{document.manufacturer} {document.family} {TOPIC_TITLES[topic]}"
+    families = sorted({_scope_family(entry) for entry in records if _scope_family(entry)})
+    manufacturers = sorted({entry.manifest.document.manufacturer for entry in records})
+    if len(manufacturers) == 1:
+        manufacturer = manufacturers[0]
+    else:
+        manufacturer = sorted(records, key=lambda entry: entry.doc_id)[0].manifest.document.manufacturer
+    if len(families) == 1:
+        return f"{manufacturer} {families[0]} {TOPIC_TITLES[topic]}"
+    return f"{manufacturer} {TOPIC_TITLES[topic]}"
 
 
 def _build_source_documents(records: list[TopicRecord]) -> list[dict[str, object]]:
@@ -531,11 +622,10 @@ def _symptom_key(records: list[TopicRecord], *, fallback: str) -> str:
 
 def _build_tags(records: list[TopicRecord], *, digest_type: str) -> list[str]:
     first_document = sorted(records, key=lambda entry: entry.doc_id)[0].manifest.document
-    tags = {
-        slugify(first_document.manufacturer),
-        slugify(first_document.family),
-        digest_type,
-    }
+    tags = {slugify(first_document.manufacturer), digest_type}
+    family_tags = {slugify(_scope_family(entry)) for entry in records if _scope_family(entry)}
+    if len(family_tags) == 1:
+        tags.update(family_tags)
     if digest_type == "controller":
         tags.add("controller-family")
     return sorted(tags)
@@ -624,3 +714,141 @@ def _prompt_claim(entry: TopicRecord) -> str:
 
 def _nested_citation(doc_id: str, record: ProcedureStep | Warning) -> str:
     return f"[Source: {doc_id}, {record_page_label(record)}]"
+
+
+def _filter_topic_records(bucket_id: str, topic: str, records: list[TopicRecord]) -> list[TopicRecord]:
+    del bucket_id
+    if not records:
+        return []
+    filtered = [entry for entry in records if _record_is_admissible_for_topic(entry, topic)]
+    if not filtered:
+        return []
+    return _cohere_topic_scope(topic, filtered)
+
+
+def _cohere_topic_scope(topic: str, records: list[TopicRecord]) -> list[TopicRecord]:
+    if topic not in {"specifications", "startup_procedure", "shutdown_procedure", "maintenance_procedure"}:
+        return records
+
+    scope_counts = Counter(_scope_key(entry) for entry in records)
+    if len(scope_counts) <= 1:
+        return records
+
+    dominant_scope, dominant_count = scope_counts.most_common(1)[0]
+    minimum_count = max(2, math.ceil(len(records) * TOPIC_SCOPE_DOMINANCE_THRESHOLD))
+    if dominant_count < minimum_count:
+        return []
+    return [entry for entry in records if _scope_key(entry) == dominant_scope]
+
+
+def _record_is_admissible_for_topic(entry: TopicRecord, topic: str) -> bool:
+    if topic == "specifications" and isinstance(entry.record, SpecValue):
+        return _spec_is_high_signal(entry)
+    if topic in TOPIC_DOMAIN_TERMS and isinstance(entry.record, Procedure):
+        return _procedure_matches_topic(entry, topic)
+    if topic == "troubleshooting" and isinstance(entry.record, TroubleshootingEntry):
+        return _troubleshooting_is_field_relevant(entry)
+    if topic == "alarm_reference" and isinstance(entry.record, AlarmDefinition):
+        return _alarm_definition_is_field_relevant(entry)
+    return True
+
+
+def _spec_is_high_signal(entry: TopicRecord) -> bool:
+    record = entry.record
+    if not isinstance(record, SpecValue):
+        return False
+    context_text = _normalize_topic_text(
+        " ".join(
+            part
+            for part in (
+                entry.section.title,
+                record.parameter,
+                record.value,
+                record.unit or "",
+                record.conditions or "",
+                entry.manifest.document.family,
+            )
+            if part
+        )
+    )
+    parameter = _normalize_topic_text(record.parameter)
+    if parameter in LOW_SIGNAL_SPEC_PARAMETERS:
+        return False
+    if any(term in context_text for term in LOW_SIGNAL_SPEC_TERMS):
+        return False
+    return True
+
+
+def _procedure_matches_topic(entry: TopicRecord, topic: str) -> bool:
+    record = entry.record
+    if not isinstance(record, Procedure):
+        return False
+    text = _normalize_topic_text(
+        " ".join(
+            [
+                entry.section.title,
+                record.title,
+                *[step.instruction for step in record.steps],
+                entry.manifest.document.family,
+            ]
+        )
+    )
+    section_type = entry.section.section_type
+    allowed_section_type = {
+        "startup_procedure": "startup",
+        "shutdown_procedure": "shutdown",
+        "maintenance_procedure": "maintenance",
+    }[topic]
+    has_topic_terms = any(term in text for term in TOPIC_DOMAIN_TERMS[topic])
+    has_ui_admin_terms = any(term in text for term in UI_ADMIN_EXCLUSION_TERMS)
+    has_field_terms = any(term in text for term in FIELD_EQUIPMENT_TERMS)
+
+    if section_type == allowed_section_type:
+        if has_ui_admin_terms and not has_field_terms:
+            return False
+        return True
+    if not has_topic_terms:
+        return False
+    if has_ui_admin_terms and not has_field_terms:
+        return False
+    return True
+
+
+def _troubleshooting_is_field_relevant(entry: TopicRecord) -> bool:
+    record = entry.record
+    if not isinstance(record, TroubleshootingEntry):
+        return False
+    text = _normalize_topic_text(
+        " ".join([record.symptom, *record.possible_causes, *record.remedies, entry.section.title])
+    )
+    return not any(term in text for term in UI_ADMIN_EXCLUSION_TERMS)
+
+
+def _alarm_definition_is_field_relevant(entry: TopicRecord) -> bool:
+    record = entry.record
+    if not isinstance(record, AlarmDefinition):
+        return False
+    text = _normalize_topic_text(
+        " ".join([record.code, record.description, record.cause, record.remedy, entry.section.title])
+    )
+    return any(term in text for term in {"alarm", "fault", "error", "indicator", "status"}) or not any(
+        term in text for term in UI_ADMIN_EXCLUSION_TERMS
+    )
+
+
+def _scope_key(entry: TopicRecord) -> tuple[str, str]:
+    applicability = _extract_applicability(entry.record)
+    manufacturer = applicability.manufacturer if applicability is not None else entry.manifest.document.manufacturer
+    family = applicability.family if applicability is not None else entry.manifest.document.family
+    return (_normalize_topic_text(manufacturer), _normalize_topic_text(family))
+
+
+def _scope_family(entry: TopicRecord) -> str:
+    applicability = _extract_applicability(entry.record)
+    if applicability is not None:
+        return applicability.family
+    return entry.manifest.document.family
+
+
+def _normalize_topic_text(value: str) -> str:
+    return re.sub(r"[^a-z0-9]+", " ", value.casefold()).strip()

@@ -77,7 +77,7 @@ def render_contradiction_notes(bucket_id: str, *, data_dir: Path | None = None) 
     entries = _build_note_entries(report)
     generated_at = _utc_timestamp()
 
-    source_documents = _build_source_documents(bucket_id, data_dir=resolved_data_dir)
+    source_documents = _build_source_documents(entries)
     extraction_versions_set: set[str] = {ANALYSIS_VERSION}
     parser_versions_set: set[str] = set()
     for entry in entries:
@@ -345,6 +345,11 @@ def _render_review_content(
                 _review_claim_line("Claim A", entry.left),
                 _review_claim_line("Claim B", entry.right),
                 "",
+                "### Resolution Snapshot",
+                "",
+                f"- Retained guidance: {_retained_guidance_text(entry)}",
+                f"- Human review still needed: {_review_needed_text(entry)}",
+                "",
                 "### Supersession Assessment",
                 "",
                 f"- Confidence: `{entry.supersession_confidence or 'none'}`",
@@ -367,39 +372,51 @@ def _render_standalone_content(bucket_id: str, entries: list[ContradictionNoteEn
     if not entries:
         lines.extend(
             [
+                "## Summary",
+                "",
                 "No contradiction candidates were found for this bucket.",
                 "",
-                "This page is still generated so publish validation has a stable artifact path.",
+                "## Field Guidance",
+                "",
+                "- No conflicting claims were identified for this bucket during the current analysis run.",
             ]
         )
         return "\n".join(lines).rstrip()
 
-    lines.extend(
-        [
-            (
-                "These notes surface competing claims, source document types, "
-                "precedence assessment, and the recommended review action."
-            ),
-            "",
-        ]
-    )
+    summary_lines = [
+        (
+            f"- {len(entries)} contradiction candidate(s) were identified for `{bucket_id}` with concrete source "
+            "claims, locators, and precedence guidance."
+        ),
+        "- Retain only the preferred claim when precedence is clear; keep the rest in human review until resolved.",
+    ]
+    field_guidance_lines: list[str] = []
     for index, entry in enumerate(entries, start=1):
-        lines.extend(
+        if field_guidance_lines:
+            field_guidance_lines.append("")
+        field_guidance_lines.extend(
             [
-                f"## Candidate {index}: {entry.left.subject_label}",
-                "",
-                f"- Conflict summary: {entry.conflicting_claim}",
-                f"- Rationale: {entry.rationale}",
+                f"### Candidate {index}: {entry.left.subject_label}",
+                f"- Conflict: {entry.conflicting_claim}",
                 f"- Claim A: {_claim_line(entry.left)}",
                 f"- Claim B: {_claim_line(entry.right)}",
-                (
-                    "- Precedence assessment: "
-                    f"{_precedence_text(entry.left, entry.right, entry.supersession_precedence_basis)}"
-                ),
+                f"- Retained guidance: {_retained_guidance_text(entry)}",
+                f"- Human review still needed: {_review_needed_text(entry)}",
                 f"- Recommended resolution: {entry.recommended_resolution}",
-                "",
             ]
         )
+
+    lines.extend(
+        [
+            "## Summary",
+            "",
+            *summary_lines,
+            "",
+            "## Field Guidance",
+            "",
+            *field_guidance_lines,
+        ]
+    )
     return "\n".join(lines).rstrip()
 
 
@@ -417,7 +434,8 @@ def _claim_line(claim: ComparableClaim) -> str:
     citation = _page_label(claim)
     return (
         f"`{claim.claim_text}` from `{claim.doc_id}` "
-        f"({claim.document_type}, {citation}, {claim.precedence_label}, level {claim.precedence_level})"
+        f'({claim.document_type}, section "{claim.record.source_heading}", {citation}, '
+        f"{claim.precedence_label}, level {claim.precedence_level})"
     )
 
 
@@ -425,7 +443,8 @@ def _review_claim_line(label: str, claim: ComparableClaim) -> str:
     citation = _page_label(claim)
     return (
         f"- {label}: `{claim.claim_text}` from `{claim.doc_id}` "
-        f"(`{claim.document_type}`, {citation}, {claim.precedence_label}, level {claim.precedence_level})"
+        f'(`{claim.document_type}`, section "{claim.record.source_heading}", {citation}, '
+        f"{claim.precedence_label}, level {claim.precedence_level})"
     )
 
 
@@ -455,11 +474,12 @@ def _recommended_resolution(
     supersession_precedence_basis: str | None,
 ) -> str:
     if supersession_precedence_basis is None or left.precedence_level == right.precedence_level:
-        return "Hold for human review because the precedence signal is ambiguous."
+        return "Keep both claims in review because the precedence signal is ambiguous."
     preferred, deferred = sorted((left, right), key=lambda claim: claim.precedence_level)
     return (
-        f"Prefer `{preferred.doc_id}` ({preferred.document_type}) over "
-        f"`{deferred.doc_id}` ({deferred.document_type}) unless reviewer context overrides the precedence rule."
+        f"Retain `{preferred.doc_id}` ({preferred.document_type}) as the default field guidance and mark "
+        f"`{deferred.doc_id}` ({deferred.document_type}) for reviewer confirmation unless local context overrides "
+        "the precedence rule."
     )
 
 
@@ -512,22 +532,43 @@ def _utc_timestamp() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
-def _build_source_documents(bucket_id: str, *, data_dir: Path) -> list[dict[str, Any]]:
-    documents: list[dict[str, Any]] = []
-    for manifest in list_manifests(data_dir):
-        if bucket_id not in {assignment.bucket_id for assignment in manifest.bucket_assignments}:
-            continue
-        document = manifest.document
-        documents.append(
-            {
-                "doc_id": manifest.doc_id,
-                "revision": document.revision,
-                "manufacturer": document.manufacturer,
-                "family": document.family,
-                "document_type": document.document_type,
-            }
-        )
-    return sorted(documents, key=lambda item: str(item["doc_id"]))
+def _retained_guidance_text(entry: ContradictionNoteEntry) -> str:
+    if entry.supersession_precedence_basis is None or entry.left.precedence_level == entry.right.precedence_level:
+        return "No claim should be retained automatically yet."
+    preferred, deferred = sorted((entry.left, entry.right), key=lambda claim: claim.precedence_level)
+    return (
+        f'Prefer `{preferred.doc_id}` ({preferred.document_type}, section "{preferred.record.source_heading}", '
+        f"{_page_label(preferred)}) over `{deferred.doc_id}`."
+    )
+
+
+def _review_needed_text(entry: ContradictionNoteEntry) -> str:
+    if _is_unresolved(entry):
+        return "Reviewer confirmation is required before this contradiction can be resolved downstream."
+    return "Review the lower-precedence claim for any local-context exception before finalizing the retained guidance."
+
+
+def _build_source_documents(entries: list[ContradictionNoteEntry]) -> list[dict[str, Any]]:
+    documents: dict[tuple[str, str], dict[str, Any]] = {}
+    for entry in entries:
+        for claim in (entry.left, entry.right):
+            key = (claim.doc_id, f"{claim.record.source_heading}|{_page_label(claim)}")
+            document = claim.manifest.document
+            locator = f'section "{claim.record.source_heading}" ({_page_label(claim)})'
+            documents.setdefault(
+                key,
+                {
+                    "doc_id": claim.doc_id,
+                    "revision": document.revision,
+                    "manufacturer": document.manufacturer,
+                    "family": document.family,
+                    "document_type": document.document_type,
+                    "title": claim.doc_id,
+                    "attachment_id": None,
+                    "locator": locator,
+                },
+            )
+    return [documents[key] for key in sorted(documents)]
 
 
 def _discover_bucket_ids(data_dir: Path) -> list[str]:

@@ -21,7 +21,7 @@ from knowledge_forge.extract.provenance import (
     validate_record_provenance,
 )
 from knowledge_forge.extract.repair import repair_extraction
-from knowledge_forge.extract.reviewability import assess_section_reviewability
+from knowledge_forge.extract.reviewability import assess_record_promotion, assess_section_reviewability
 from knowledge_forge.extract.schemas import BucketContext, ExtractionSchemaModel, get_json_schema, get_schema_model
 from knowledge_forge.inference import InferenceClient
 from knowledge_forge.inference.config import InferenceConfig
@@ -588,10 +588,18 @@ def persist_work_item_result(
         )
         for record in scored_records
     ]
+    promoted_records: list[ExtractedRecord] = []
+    promotion_messages: list[str] = []
+    for record in records_with_provenance:
+        promotion = assess_record_promotion(prepared.section, prepared.record_type, record)
+        if promotion.promotable:
+            promoted_records.append(record)
+            continue
+        promotion_messages.extend(promotion.messages)
     review_flag = build_review_flag(
         section=prepared.section,
         record_type=prepared.record_type,
-        records=records_with_provenance,
+        records=promoted_records,
         min_confidence=min_confidence,
         repair_attempts=repair_attempts,
         errors=repair_errors,
@@ -599,7 +607,7 @@ def persist_work_item_result(
     output_paths = save_records(
         section=prepared.section,
         record_type=prepared.record_type,
-        records=records_with_provenance,
+        records=promoted_records,
         data_dir=data_dir,
     )
     sync_review_flag(review_flag, section=prepared.section, record_type=prepared.record_type, data_dir=data_dir)
@@ -609,9 +617,9 @@ def persist_work_item_result(
         record_type=prepared.record_type,
         status="succeeded",
         fingerprint=prepared.fingerprint,
-        records=records_with_provenance,
+        records=promoted_records,
         record_ids=[path.stem for path in output_paths],
-        errors=[],
+        errors=promotion_messages,
         review_flag=review_flag,
         repair_attempts=repair_attempts,
         output_paths=output_paths,

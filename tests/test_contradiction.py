@@ -319,6 +319,89 @@ def test_analyze_contradictions_builds_cross_document_type_supersession_candidat
     assert contradiction.supersession.document_types_compared == ["Service Manual", "SOP"]
 
 
+def test_analyze_contradictions_disambiguates_duplicate_step_numbers_within_one_procedure(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    bucket_id = "honeywell/dc1000/family"
+    manual_doc_id = _register_fixture_doc(
+        _write_pdf(tmp_path / "manual.pdf"),
+        data_dir,
+        document_type="Service Manual",
+        document_class="authoritative-technical",
+        revision="Rev 3",
+    )
+
+    _write_record(
+        data_dir,
+        manual_doc_id,
+        "procedure",
+        "startup-001",
+        {
+            **_base_payload(
+                manual_doc_id,
+                heading="Startup Procedure",
+                start_page=18,
+                end_page=20,
+                bucket_id=bucket_id,
+            ),
+            "title": "Prime the pump",
+            "steps": [
+                {
+                    **_base_payload(
+                        manual_doc_id,
+                        heading="Startup Procedure",
+                        start_page=18,
+                        end_page=18,
+                        bucket_id=bucket_id,
+                    ),
+                    "step_number": 1,
+                    "instruction": "Verify the pump casing is vented.",
+                    "note": None,
+                    "caution": None,
+                    "figure_ref": None,
+                },
+                {
+                    **_base_payload(
+                        manual_doc_id,
+                        heading="Startup Procedure",
+                        start_page=19,
+                        end_page=19,
+                        bucket_id=bucket_id,
+                    ),
+                    "step_number": 2,
+                    "instruction": "Open the discharge valve before energizing the motor.",
+                    "note": None,
+                    "caution": None,
+                    "figure_ref": None,
+                },
+                {
+                    **_base_payload(
+                        manual_doc_id,
+                        heading="Startup Procedure",
+                        start_page=20,
+                        end_page=20,
+                        bucket_id=bucket_id,
+                    ),
+                    "step_number": 2,
+                    "instruction": "Keep the discharge valve closed before energizing the motor.",
+                    "note": None,
+                    "caution": None,
+                    "figure_ref": None,
+                },
+            ],
+            "applicability": _applicability_payload(manual_doc_id, bucket_id),
+            "warnings": [],
+            "tools_required": [],
+        },
+    )
+
+    report = analyze_contradictions(bucket_id, data_dir=data_dir)
+
+    assert len(report.contradictions) == 1
+    contradiction = report.contradictions[0]
+    assert contradiction.record_ids == ["startup-001::step-002", "startup-001::step-002--occurrence-002"]
+    assert contradiction.record_ids[0] != contradiction.record_ids[1]
+
+
 def test_find_supersession_assessments_flags_same_tier_revision_changes(tmp_path: Path) -> None:
     data_dir = tmp_path / "data"
     bucket_id = "honeywell/dc1000/family"

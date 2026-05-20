@@ -271,8 +271,14 @@ def _expand_comparable_claims(
         return claims
 
     procedure_scope = _applicability_scope(record.applicability or record, manifest)
+    step_counts: dict[int, int] = {}
     for step in record.steps:
-        step_id = f"{record_id}::step-{step.step_number:03d}"
+        step_counts[step.step_number] = step_counts.get(step.step_number, 0) + 1
+        step_id = _procedure_step_record_id(
+            record_id,
+            step_number=step.step_number,
+            occurrence=step_counts[step.step_number],
+        )
         claims.append(
             ComparableClaim(
                 record_id=step_id,
@@ -307,6 +313,13 @@ def _expand_comparable_claims(
             )
         )
     return claims
+
+
+def _procedure_step_record_id(record_id: str, *, step_number: int, occurrence: int) -> str:
+    base_id = f"{record_id}::step-{step_number:03d}"
+    if occurrence == 1:
+        return base_id
+    return f"{base_id}--occurrence-{occurrence:03d}"
 
 
 def _claims_are_comparable(left: ComparableClaim, right: ComparableClaim) -> bool:
