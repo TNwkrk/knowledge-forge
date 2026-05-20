@@ -12,10 +12,12 @@ from knowledge_forge.cli import cli
 from knowledge_forge.extract.engine import (
     SECTION_RECORD_TYPE_MAP,
     build_record_id,
+    execute_work_item,
     extract_document,
     extract_section,
     load_prompt_template,
 )
+from knowledge_forge.extract.provenance import load_bucket_context, load_parse_metadata
 from knowledge_forge.extract.reviewability import assess_section_reviewability
 from knowledge_forge.intake.importer import RegistrationRequest, load_manifest, register_document
 from knowledge_forge.intake.manifest import BucketAssignment, DocumentStatus
@@ -457,6 +459,68 @@ def test_extract_section_filters_low_signal_spec_fragments_before_promotion(tmp_
     extracted_dir = data_dir / "extracted" / doc_id / "spec_value"
     written = sorted(path.name for path in extracted_dir.glob("*.json"))
     assert written == [f"{section.section_id}--spec_value--001.json"]
+
+
+def test_execute_work_item_surfaces_filtered_record_promotion_messages(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    doc_id = _register_parsed_fixture(_write_pdf(tmp_path / "manual.pdf"), data_dir)
+    _write_parse_meta(data_dir, doc_id)
+    _write_bucket_assignments(data_dir, doc_id)
+    section = Section(
+        doc_id=doc_id,
+        section_id=f"{doc_id}--technical-data--001",
+        section_type="specifications",
+        title="Technical Data",
+        content="Control voltage: 24 VDC\nXML encoding: UTF-8\nDimension A: 32 mm",
+        page_range=(12, 13),
+        heading_path=["Technical Data"],
+    )
+    client = _FakeClient(
+        {
+            "spec_value": [
+                {
+                    **_base_record(),
+                    "parameter": "Control voltage",
+                    "value": "24",
+                    "unit": "VDC",
+                    "conditions": None,
+                    "applicability": None,
+                },
+                {
+                    **_base_record(),
+                    "parameter": "XML encoding",
+                    "value": "UTF-8",
+                    "unit": None,
+                    "conditions": None,
+                    "applicability": None,
+                },
+                {
+                    **_base_record(),
+                    "parameter": "A",
+                    "value": "32",
+                    "unit": "mm",
+                    "conditions": None,
+                    "applicability": None,
+                },
+            ]
+        }
+    )
+
+    result = execute_work_item(
+        section=section,
+        record_type="spec_value",
+        client=client,
+        data_dir=data_dir,
+        max_repair_attempts=2,
+        section_quality=1.0,
+        min_confidence=0.0,
+        parse_meta=load_parse_metadata(doc_id, data_dir=data_dir),
+        bucket_context=load_bucket_context(doc_id, data_dir=data_dir),
+    )
+
+    assert [record.parameter for record in result.records] == ["Control voltage"]
+    assert "Specification 'XML encoding' looks like file, encoding, or compliance noise." in result.errors
+    assert "Specification parameter 'A' looks like an orphaned dimension fragment." in result.errors
 
 
 def test_section_type_mapping_covers_all_canonical_section_types() -> None:

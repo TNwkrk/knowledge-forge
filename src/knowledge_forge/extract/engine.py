@@ -588,11 +588,14 @@ def persist_work_item_result(
         )
         for record in scored_records
     ]
-    promoted_records = [
-        record
-        for record in records_with_provenance
-        if assess_record_promotion(prepared.section, prepared.record_type, record).promotable
-    ]
+    promoted_records: list[ExtractedRecord] = []
+    promotion_messages: list[str] = []
+    for record in records_with_provenance:
+        promotion = assess_record_promotion(prepared.section, prepared.record_type, record)
+        if promotion.promotable:
+            promoted_records.append(record)
+            continue
+        promotion_messages.extend(promotion.messages)
     review_flag = build_review_flag(
         section=prepared.section,
         record_type=prepared.record_type,
@@ -616,7 +619,7 @@ def persist_work_item_result(
         fingerprint=prepared.fingerprint,
         records=promoted_records,
         record_ids=[path.stem for path in output_paths],
-        errors=[],
+        errors=promotion_messages,
         review_flag=review_flag,
         repair_attempts=repair_attempts,
         output_paths=output_paths,
